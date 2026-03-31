@@ -1,0 +1,46 @@
+/* Form Builder Styles */
+.dfb-admin-wrap {
+    max-width: 1200px;
+}
+
+.question-row {
+    position: relative;
+    transition: all 0.3s ease;
+}
+
+.question-row:hover {
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.remove-question:hover {
+    background: #a00 !important;
+}
+
+.image-preview img {
+    border: 1px solid #ddd;
+    padding: 5px;
+    border-radius: 4px;
+}
+
+/* Form table improvements */
+.form-table th {
+    vertical-align: top;
+    padding-top: 15px;
+}
+
+/* Button styling */
+#add-question {
+    font-size: 14px;
+    height: auto;
+    padding: 8px 16px;
+}
+
+/* Success message */
+.dfb-success {
+    background: #00a32a;
+    color: white;
+    padding: 12px 20px;
+    border-radius: 4px;
+    margin: 20px 0;
+}
+ 
