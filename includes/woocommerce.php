@@ -66,6 +66,32 @@ function dfb_get_form_page_url($form_id) {
 // ============================================================
 $GLOBALS['dfb_internal_cart_operation'] = false;
 
+/**
+ * Remove stale DFB notices so checkout does not show old form warnings.
+ */
+function dfb_clear_form_required_notices() {
+    if (!function_exists('wc_get_notices') || !function_exists('wc_set_notices')) {
+        return;
+    }
+
+    $notices = wc_get_notices();
+    if (!is_array($notices) || empty($notices['error']) || !is_array($notices['error'])) {
+        return;
+    }
+
+    $filtered_errors = [];
+    foreach ($notices['error'] as $notice) {
+        $message = isset($notice['notice']) ? wp_strip_all_tags((string) $notice['notice']) : '';
+        $is_dfb_form_notice = (stripos($message, 'fill out the required form') !== false);
+        if (!$is_dfb_form_notice) {
+            $filtered_errors[] = $notice;
+        }
+    }
+
+    $notices['error'] = $filtered_errors;
+    wc_set_notices($notices);
+}
+
 // ============================================================
 // Core redirect function (called after form submit)
 // ============================================================
@@ -103,6 +129,9 @@ function dfb_redirect_to_checkout_with_response($product_id, $response_id) {
     if (WC()->session) {
         WC()->session->set('dfb_response_id', intval($response_id));
     }
+
+    // User has completed the form now; avoid showing stale warning on checkout.
+    dfb_clear_form_required_notices();
 
     wp_safe_redirect(wc_get_checkout_url());
     exit;
@@ -270,6 +299,9 @@ function dfb_require_form_before_checkout() {
         wp_safe_redirect($form_url);
         exit;
     }
+
+    // Form is no longer required for current cart; cleanup old warning.
+    dfb_clear_form_required_notices();
 }
 
 // ============================================================

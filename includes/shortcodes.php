@@ -133,9 +133,20 @@ function dfb_handle_frontend_form_submit($form, $questions) {
     $guard_key = 'dfb_submit_guard_' . $user_id . '_' . $form->id;
     $existing_response_id = intval(get_transient($guard_key));
     if ($existing_response_id > 0) {
-        // User already submitted recently; continue the intended flow.
-        dfb_redirect_to_checkout_with_response(intval($form->woo_product_id), $existing_response_id);
-        return '<p>Redirecting to checkout...</p>';
+        global $wpdb;
+        $response_exists = intval($wpdb->get_var($wpdb->prepare(
+            "SELECT id FROM {$wpdb->prefix}dfb_responses WHERE id = %d",
+            $existing_response_id
+        )));
+
+        if ($response_exists > 0) {
+            // User already submitted recently; continue the intended flow.
+            dfb_redirect_to_checkout_with_response(intval($form->woo_product_id), $existing_response_id);
+            return '<p>Redirecting to checkout...</p>';
+        }
+
+        // Stale transient (response deleted/missing) — allow fresh submission.
+        delete_transient($guard_key);
     }
 
     $submitted_answers = isset($_POST['answers']) && is_array($_POST['answers']) ? $_POST['answers'] : [];
