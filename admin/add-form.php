@@ -178,6 +178,12 @@ function dfb_render_question_row($index, $question = null) {
     }
     $input_options = $question ? $question->input_options : '';
     $is_required = $question ? $question->is_required : 1;
+    $depends_on_question_order = $question && isset($question->depends_on_question_order)
+        ? $question->depends_on_question_order
+        : '';
+    $depends_on_value = $question && isset($question->depends_on_value)
+        ? $question->depends_on_value
+        : '';
     
     ob_start();
     ?>
@@ -276,6 +282,28 @@ function dfb_render_question_row($index, $question = null) {
                     </label>
                 </td>
             </tr>
+            <tr>
+                <th><label>Depends on Question #</label></th>
+                <td>
+                    <input type="number"
+                           min="1"
+                           name="questions[<?php echo $index; ?>][depends_on_question_order]"
+                           class="regular-text"
+                           value="<?php echo is_numeric($depends_on_question_order) ? esc_attr((string) $depends_on_question_order) : ''; ?>"
+                           placeholder="e.g., 1">
+                    <p class="description">Leave empty to always show this question.</p>
+                </td>
+            </tr>
+            <tr>
+                <th><label>Show when answer equals</label></th>
+                <td>
+                    <input type="text"
+                           name="questions[<?php echo $index; ?>][depends_on_value]"
+                           class="regular-text"
+                           value="<?php echo esc_attr((string) $depends_on_value); ?>"
+                           placeholder="e.g., Yes (must match option value exactly)">
+                </td>
+            </tr>
         </table>
     </div>
     <?php
@@ -342,8 +370,19 @@ function dfb_save_form_data() {
                 'input_type' => $input_type,
                 'input_options' => sanitize_textarea_field($question['options']),
                 'is_required' => isset($question['required']) ? 1 : 0,
-                'question_order' => $order
+                'question_order' => $order,
+                'depends_on_question_order' => (isset($question['depends_on_question_order']) && $question['depends_on_question_order'] !== '')
+                    ? intval($question['depends_on_question_order'])
+                    : null,
+                'depends_on_value' => (isset($question['depends_on_value']) && trim((string) $question['depends_on_value']) !== '')
+                    ? sanitize_text_field((string) $question['depends_on_value'])
+                    : null,
             ];
+
+            // Normalize invalid dependency numbers to NULL.
+            if (isset($question_data['depends_on_question_order']) && intval($question_data['depends_on_question_order']) <= 0) {
+                $question_data['depends_on_question_order'] = null;
+            }
             
             $wpdb->insert($wpdb->prefix . 'dfb_questions', $question_data);
         }

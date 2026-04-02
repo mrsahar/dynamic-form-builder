@@ -208,7 +208,15 @@ function dfb_form_shortcode($atts) {
             <input type="hidden" name="dfb_form_id" value="<?php echo intval($form->id); ?>">
 
             <?php foreach ($questions as $index => $question): ?>
-                <div class="dfb-step" data-step="<?php echo intval($index + 1); ?>" style="display: <?php echo $index === 0 ? 'block' : 'none'; ?>;">
+                <div class="dfb-step"
+                     data-step="<?php echo intval($index + 1); ?>"
+                     data-dfb-step-order="<?php echo intval($index + 1); ?>"
+                     data-dfb-input-type="<?php echo esc_attr((string) $question->input_type); ?>"
+                     <?php if (!empty($question->depends_on_question_order) && $question->depends_on_value !== null && $question->depends_on_value !== ''): ?>
+                         data-dfb-dep-parent="<?php echo intval($question->depends_on_question_order); ?>"
+                         data-dfb-dep-value="<?php echo esc_attr((string) $question->depends_on_value); ?>"
+                     <?php endif; ?>
+                     style="display: <?php echo $index === 0 ? 'block' : 'none'; ?>;">
                     <h3><?php echo esc_html($question->question_title); ?></h3>
                     <?php if (!empty($question->question_description)): ?>
                         <p><?php echo esc_html($question->question_description); ?></p>
@@ -310,9 +318,49 @@ function dfb_handle_frontend_form_submit($form, $questions) {
     $submitted_answers = isset($_POST['answers']) && is_array($_POST['answers']) ? $_POST['answers'] : [];
     $answers = [];
 
+    $total_questions = count($questions);
+
     foreach ($questions as $index => $question) {
-        $key = 'question_' . intval($index + 1);
+        $question_number = intval($index + 1); // matches frontend key: question_{number}
+        $key = 'question_' . $question_number;
+
+        // Determine visibility for conditional questions.
+        $is_visible = true;
+        $dep_parent_order = isset($question->depends_on_question_order) ? $question->depends_on_question_order : null;
+        $dep_value = isset($question->depends_on_value) ? $question->depends_on_value : null;
+
+        if (!empty($dep_parent_order) && $dep_value !== null && $dep_value !== '') {
+            $parent_number = intval($dep_parent_order);
+            $expected_value = (string) $dep_value;
+
+            // Only support parent questions with known input types.
+            if ($parent_number > 0 && $parent_number <= $total_questions) {
+                $parent_question = $questions[$parent_number - 1];
+                $parent_type = isset($parent_question->input_type) ? (string) $parent_question->input_type : '';
+                $parent_key = 'question_' . $parent_number;
+                $parent_raw_value = isset($submitted_answers[$parent_key]) ? $submitted_answers[$parent_key] : '';
+
+                if ($parent_type === 'checkbox') {
+                    $parent_vals = is_array($parent_raw_value) ? $parent_raw_value : [];
+                    $is_visible = in_array($expected_value, $parent_vals, true);
+                } elseif ($parent_type === 'radio' || $parent_type === 'dropdown') {
+                    $parent_str = is_array($parent_raw_value) ? '' : (string) $parent_raw_value;
+                    $is_visible = $parent_str === $expected_value;
+                } else {
+                    $is_visible = false;
+                }
+            } else {
+                $is_visible = false;
+            }
+        }
+
         $value = isset($submitted_answers[$key]) ? $submitted_answers[$key] : '';
+
+        if (!$is_visible) {
+            // Hidden questions should not block submission.
+            $answers[$key] = '';
+            continue;
+        }
 
         if (is_array($value)) {
             $clean = array_map('sanitize_text_field', $value);

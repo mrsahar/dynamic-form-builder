@@ -124,6 +124,25 @@ jQuery(document).ready(function($) {
                             </label>
                         </td>
                     </tr>
+                    <tr>
+                        <th><label>Depends on Question #</label></th>
+                        <td>
+                            <input type="number" min="1"
+                                   name="questions[${index}][depends_on_question_order]"
+                                   class="regular-text"
+                                   placeholder="e.g., 1">
+                            <p class="description">Leave empty to always show this question.</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th><label>Show when answer equals</label></th>
+                        <td>
+                            <input type="text"
+                                   name="questions[${index}][depends_on_value]"
+                                   class="regular-text"
+                                   placeholder="e.g., Yes (must match option value exactly)">
+                        </td>
+                    </tr>
                 </table>
             </div>
         `;

@@ -1,39 +1,31 @@
 jQuery(document).ready(function($) {
-    var $steps = $('.dfb-step');
-    if (!$steps.length) {
-        return;
-    }
+    var $form = $('.dfb-step-form');
+    var $steps = $('.dfb-step', $form);
+    if (!$steps.length) return;
 
-    var currentStep = 1;
-    var totalSteps = $steps.length;
     var $nextBtn = $('#dfb-next-btn');
     var $prevBtn = $('#dfb-prev-btn');
     var $submitBtn = $('#dfb-submit-btn');
     var $progressBar = $('#dfb-progress-bar');
     var $progressText = $('#dfb-progress-text');
 
-    function updateUI() {
-        $steps.hide();
-        $('.dfb-step[data-step="' + currentStep + '"]').show();
+    var stepElsByOrder = {};
+    var allOrders = [];
 
-        var percent = Math.round((currentStep / totalSteps) * 100);
-        $progressBar.css('width', percent + '%');
-        $progressText.text('Step ' + currentStep + ' of ' + totalSteps);
+    $steps.each(function() {
+        var $el = $(this);
+        var order = parseInt($el.attr('data-dfb-step-order') || $el.attr('data-step') || '', 10);
+        if (!order) return;
+        stepElsByOrder[order] = $el;
+        allOrders.push(order);
+    });
 
-        if (currentStep === 1) {
-            $prevBtn.hide();
-        } else {
-            $prevBtn.show();
-        }
+    allOrders.sort(function(a, b) {
+        return a - b;
+    });
 
-        if (currentStep === totalSteps) {
-            $nextBtn.hide();
-            $submitBtn.show();
-        } else {
-            $nextBtn.show();
-            $submitBtn.hide();
-        }
-    }
+    var visibleOrders = [];
+    var currentOrder = null;
 
     function clearStepErrors($step) {
         $step.find('.dfb-input-wrap')
@@ -52,10 +44,127 @@ jQuery(document).ready(function($) {
         }
     }
 
-    function validateCurrentStep() {
-        var valid = true;
-        var $current = $('.dfb-step[data-step="' + currentStep + '"]');
+    function evaluateStepVisible($step) {
+        var parentOrderRaw = $step.attr('data-dfb-dep-parent');
+        var depValue = $step.attr('data-dfb-dep-value');
 
+        if (!parentOrderRaw || depValue === null || depValue === undefined || depValue === '') {
+            return true;
+        }
+
+        var parentOrder = parseInt(parentOrderRaw, 10);
+        if (!parentOrder) return false;
+
+        var $parent = stepElsByOrder[parentOrder];
+        if (!$parent || !$parent.length) return false;
+
+        var parentType = ($parent.attr('data-dfb-input-type') || '').toString();
+
+        var depValueStr = String(depValue);
+
+        // Only certain parent types are supported for matching.
+        if (parentType === 'checkbox') {
+            var parentName = 'answers[question_' + parentOrder + '][]';
+            var selected = [];
+            $form.find('input[type="checkbox"][name="' + parentName + '"]:checked').each(function() {
+                selected.push(String($(this).val()));
+            });
+            return selected.indexOf(depValueStr) !== -1;
+        }
+
+        if (parentType === 'radio') {
+            var parentRadioName = 'answers[question_' + parentOrder + ']';
+            var $checked = $form.find('input[type="radio"][name="' + parentRadioName + '"]:checked');
+            if (!$checked.length) return false;
+            return String($checked.val()) === depValueStr;
+        }
+
+        if (parentType === 'dropdown') {
+            var parentSelectName = 'answers[question_' + parentOrder + ']';
+            var val = $form.find('select[name="' + parentSelectName + '"]').val();
+            return String(val) === depValueStr;
+        }
+
+        return false;
+    }
+
+    function clearHiddenStepInputs($step) {
+        // Text-like
+        $step.find('input[type="text"], input[type="email"], input[type="number"], input[type="date"], textarea').val('');
+        // Select
+        $step.find('select').val('');
+        // Radio/Checkbox
+        $step.find('input[type="radio"], input[type="checkbox"]').prop('checked', false);
+    }
+
+    function recalcVisibleSteps() {
+        var prevVisible = visibleOrders.slice(0);
+        var nextVisible = [];
+
+        for (var i = 0; i < allOrders.length; i++) {
+            var order = allOrders[i];
+            var $step = stepElsByOrder[order];
+            if (!$step || !$step.length) continue;
+            if (evaluateStepVisible($step)) {
+                nextVisible.push(order);
+            }
+        }
+
+        // Clear inputs for steps that became hidden.
+        for (var j = 0; j < prevVisible.length; j++) {
+            var prevOrder = prevVisible[j];
+            if (nextVisible.indexOf(prevOrder) === -1) {
+                clearHiddenStepInputs(stepElsByOrder[prevOrder]);
+            }
+        }
+
+        visibleOrders = nextVisible;
+
+        if (currentOrder === null || visibleOrders.indexOf(currentOrder) === -1) {
+            currentOrder = visibleOrders.length ? visibleOrders[0] : null;
+        }
+    }
+
+    function updateUI() {
+        $steps.hide();
+
+        if (!currentOrder) {
+            $progressBar.css('width', '0%');
+            $progressText.text('');
+            $prevBtn.hide();
+            $nextBtn.hide();
+            $submitBtn.hide();
+            return;
+        }
+
+        var $current = stepElsByOrder[currentOrder];
+        $current.show();
+
+        var idx = visibleOrders.indexOf(currentOrder);
+        var total = visibleOrders.length;
+        var stepNum = idx + 1;
+
+        var percent = total ? Math.round((stepNum / total) * 100) : 0;
+        $progressBar.css('width', percent + '%');
+        $progressText.text('Step ' + stepNum + ' of ' + total);
+
+        if (idx === 0) $prevBtn.hide();
+        else $prevBtn.show();
+
+        if (idx === total - 1) {
+            $nextBtn.hide();
+            $submitBtn.show();
+        } else {
+            $nextBtn.show();
+            $submitBtn.hide();
+        }
+    }
+
+    function validateCurrentStep() {
+        var $current = currentOrder !== null ? stepElsByOrder[currentOrder] : $();
+        if (!$current || !$current.length) return false;
+
+        var valid = true;
         clearStepErrors($current);
 
         // Check normal fields first (text/textarea/select).
@@ -79,52 +188,70 @@ jQuery(document).ready(function($) {
             }
         });
 
-        if (!valid) return valid;
+        if (!valid) return false;
 
-        // Radio required: at least one in the group must be checked.
+        // Radio required: at least one in each required group must be checked.
+        var radioNames = [];
         $current.find('input[type="radio"][required]').each(function() {
             var name = $(this).attr('name');
-            if (!name) return;
-            if ($current.find('input[type="radio"][name="' + name + '"]:checked').length === 0) {
-                valid = false;
-                showFieldError($(this), 'Please choose an option.');
-                return false;
-            }
+            if (name && radioNames.indexOf(name) === -1) radioNames.push(name);
         });
+        for (var i = 0; i < radioNames.length; i++) {
+            var rn = radioNames[i];
+            var $checked = $current.find('input[type="radio"][name="' + rn + '"]:checked');
+            if (!$checked.length) {
+                valid = false;
+                showFieldError($current.find('input[type="radio"][name="' + rn + '"]').first(), 'Please choose an option.');
+                break;
+            }
+        }
+        if (!valid) return false;
 
-        if (!valid) return valid;
-
-        // Checkbox required: at least one in the group must be checked.
+        // Checkbox required: at least one in each required group must be checked.
+        var checkboxNames = [];
         $current.find('input[type="checkbox"][required]').each(function() {
             var name = $(this).attr('name');
-            if (!name) return;
-            if ($current.find('input[type="checkbox"][name="' + name + '"]:checked').length === 0) {
-                valid = false;
-                showFieldError($(this), 'Please select at least one option.');
-                return false;
-            }
+            if (name && checkboxNames.indexOf(name) === -1) checkboxNames.push(name);
         });
+        for (var j = 0; j < checkboxNames.length; j++) {
+            var cn = checkboxNames[j];
+            var $checked2 = $current.find('input[type="checkbox"][name="' + cn + '"]:checked');
+            if (!$checked2.length) {
+                valid = false;
+                showFieldError($current.find('input[type="checkbox"][name="' + cn + '"]').first(), 'Please select at least one option.');
+                break;
+            }
+        }
 
         return valid;
     }
 
+    // Navigation
     $nextBtn.on('click', function() {
-        if (!validateCurrentStep()) {
-            return;
-        }
-
-        if (currentStep < totalSteps) {
-            currentStep += 1;
+        if (!validateCurrentStep()) return;
+        var idx = visibleOrders.indexOf(currentOrder);
+        if (idx < 0) return;
+        if (idx < visibleOrders.length - 1) {
+            currentOrder = visibleOrders[idx + 1];
             updateUI();
         }
     });
 
     $prevBtn.on('click', function() {
-        if (currentStep > 1) {
-            currentStep -= 1;
+        var idx = visibleOrders.indexOf(currentOrder);
+        if (idx > 0) {
+            currentOrder = visibleOrders[idx - 1];
             updateUI();
         }
     });
 
+    // Recalculate visible steps when supported parent inputs change.
+    $form.on('change', 'select, input[type="radio"], input[type="checkbox"]', function() {
+        recalcVisibleSteps();
+        updateUI();
+    });
+
+    // Initial compute.
+    recalcVisibleSteps();
     updateUI();
 });

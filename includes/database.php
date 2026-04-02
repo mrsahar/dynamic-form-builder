@@ -30,6 +30,8 @@ function dfb_activate_plugin() {
         image_url VARCHAR(500),
         input_type VARCHAR(50) NOT NULL,
         input_options TEXT,
+        depends_on_question_order INT DEFAULT NULL,
+        depends_on_value TEXT,
         is_required TINYINT(1) DEFAULT 1,
         question_order INT DEFAULT 0,
         PRIMARY KEY (id),
@@ -123,3 +125,31 @@ function dfb_ensure_responses_table_columns() {
     }
 }
 add_action('init', 'dfb_ensure_responses_table_columns', 25);
+
+/**
+ * Ensure conditional-branching columns exist for existing installs.
+ */
+function dfb_ensure_questions_table_columns() {
+    global $wpdb;
+
+    $table = $wpdb->prefix . 'dfb_questions';
+
+    $table_exists = $wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $table));
+    if ($table_exists !== $table) {
+        return;
+    }
+
+    $columns = $wpdb->get_col("SHOW COLUMNS FROM {$table}", 0);
+    if (!is_array($columns) || empty($columns)) {
+        return;
+    }
+
+    if (!in_array('depends_on_question_order', $columns, true)) {
+        $wpdb->query("ALTER TABLE {$table} ADD COLUMN depends_on_question_order INT DEFAULT NULL AFTER input_options");
+    }
+
+    if (!in_array('depends_on_value', $columns, true)) {
+        $wpdb->query("ALTER TABLE {$table} ADD COLUMN depends_on_value TEXT AFTER depends_on_question_order");
+    }
+}
+add_action('init', 'dfb_ensure_questions_table_columns', 30);
