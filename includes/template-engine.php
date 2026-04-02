@@ -54,34 +54,98 @@ function dfb_render_document_template($template_content, $response_row) {
         $rendered
     );
 
-    // Add website name header centered at the top.
+    // Build header/footer from plugin settings.
+    $header_logo_id  = (int) get_option('dfb_header_logo_id', 0);
+    // Use the full attachment URL so it works reliably in PDF generators.
+    // Dompdf fix: convert URL to absolute file path with file:// prefix
+        if ($header_logo_id) {
+            $attached_file = get_attached_file($header_logo_id);
+            if ($attached_file && file_exists($attached_file)) {
+                $header_logo_url = 'file://' . $attached_file;
+            } else {
+                $header_logo_url = wp_get_attachment_url($header_logo_id); // fallback
+            }
+        } else {
+            $header_logo_url = '';
+}
+    $header_text_opt = (string) get_option('dfb_header_text', '');
+    $footer_text_opt = (string) get_option('dfb_footer_text', '');
+
     $site_name = get_bloginfo('name');
     if (!is_string($site_name)) {
         $site_name = '';
     }
-    $site_header = '';
-    if ($site_name !== '') {
-        $site_header = '
+
+    $header_html = '';
+    if ($header_logo_url || $header_text_opt || $site_name) {
+        $header_html = '
 <style>
     body { font-family: Arial, sans-serif; color: #333; margin: 40px; }
-    .header { text-align: center; border-bottom: 2px solid #333; padding-bottom: 15px; margin-bottom: 30px; }
-    .header h1 { font-size: 24px; margin: 0; }
-    .header p { font-size: 12px; color: #666; margin: 5px 0 0; }
+    .dfb-header { border-bottom: 2px solid #333; padding-bottom: 15px; margin-bottom: 30px; }
+    .dfb-header-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+    .dfb-header-logo { margin-right: 20px; flex-shrink: 0; }
+    .dfb-header-logo img { max-height: 80px; width: auto; }
+    .dfb-header-main { }
+    .dfb-header-title { font-size: 24px; margin: 0; }
+    .dfb-header-text { font-size: 12px; color: #666; margin: 5px 0 0; white-space: pre-line; }
+    .dfb-generated-on { font-size: 11px; color: #999; margin-top: 5px; }
     .section { margin-bottom: 20px; }
     .section h3 { font-size: 14px; border-bottom: 1px solid #ddd; padding-bottom: 5px; }
     table { width: 100%; border-collapse: collapse; }
     td { padding: 8px 10px; border: 1px solid #ddd; font-size: 13px; }
     td:first-child { font-weight: bold; width: 35%; background: #f9f9f9; }
+    .dfb-qa-section { margin-top: 25px; }
+    .dfb-qa-section-title { font-size: 16px; margin: 0 0 10px; }
+    .dfb-qa-item { padding: 8px 0; border-bottom: 1px solid #ddd; }
+    .dfb-qa-question { font-weight: bold; display: block; }
+    .dfb-qa-answer { margin-left: 10px; display: block; margin-top: 3px; }
+    .dfb-custom-section { margin-top: 25px; }
+    .dfb-custom-section-title { font-size: 16px; margin: 0 0 8px; }
+    .dfb-custom-section-body { font-size: 13px; }
+    .dfb-footer { margin-top: 30px; padding-top: 10px; border-top: 1px solid #ddd; font-size: 11px; color: #666; text-align: center; white-space: pre-line; }
 </style>
-<div class="header">
-    <h1>' . esc_html($site_name) . '</h1>
-    <p>Generated on: ' . esc_html(wp_date('Y-m-d')) . '</p>
+<div class="dfb-header">';
+
+        // Top row: logo on the left, generated date on the right.
+        $header_html .= '
+<div class="dfb-header-top">';
+        if ($header_logo_url) {
+            $header_html .= '
+    <div class="dfb-header-logo">
+        <img src="' . esc_attr($header_logo_url) . '" alt="">
+    </div>';
+        }
+        $header_html .= '
+    <p class="dfb-generated-on">' . esc_html__('Generated on:', 'dynamic-form-builder') . ' ' . esc_html(wp_date('Y-m-d')) . '</p>
+</div>';
+
+        // Second row: title and optional header text full-width.
+        $header_html .= '
+<div class="dfb-header-main">';
+
+        if ($site_name) {
+            $header_html .= '
+    <h1 class="dfb-header-title">' . esc_html($site_name) . '</h1>';
+        }
+
+        if ($header_text_opt) {
+            $header_html .= '
+    <p class="dfb-header-text">' . wp_kses_post(nl2br($header_text_opt)) . '</p>';
+        }
+
+        $header_html .= '
+</div>
 </div>';
     }
 
-    // Fallback: if no answer placeholder was used, append submitted answers.
-    $has_answer_placeholders = preg_match('/\{\{(?:question_\d+|q\d+|\d+)\}\}/i', (string) $template_content) === 1;
-    if (!$has_answer_placeholders && !empty($answers)) {
+    $footer_html = '';
+    if ($footer_text_opt) {
+        $footer_html = '
+<div class="dfb-footer">' . wp_kses_post(nl2br($footer_text_opt)) . '</div>';
+    }
+
+    // Always append a structured Question/Answer section if we have answers.
+    if (!empty($answers)) {
         global $wpdb;
         $question_labels = [];
         if (!empty($response_row->form_id)) {
@@ -100,16 +164,45 @@ function dfb_render_document_template($template_content, $response_row) {
             }
         }
 
-        $rendered .= '<hr><h3>Submitted Answers</h3><ul>';
+        $rendered .= '<div class="dfb-qa-section">';
+        $rendered .= '<h3 class="dfb-qa-section-title">' . esc_html__('Submitted Answers', 'dynamic-form-builder') . '</h3>';
+
         foreach ($answers as $key => $value) {
             $label = isset($question_labels[$key]) && $question_labels[$key] !== ''
                 ? $question_labels[$key]
                 : ucwords(str_replace('_', ' ', (string) $key));
             $value_text = is_scalar($value) ? (string) $value : wp_json_encode($value);
-            $rendered .= '<li><strong>' . esc_html($label) . ':</strong> ' . esc_html($value_text) . '</li>';
+
+            $rendered .= '<div class="dfb-qa-item">';
+            $rendered .= '<div class="dfb-qa-question">' . esc_html($label) . ':</div>';
+            $rendered .= '<div class="dfb-qa-answer">' . esc_html($value_text) . '</div>';
+            $rendered .= '</div>';
         }
-        $rendered .= '</ul>';
+
+        $rendered .= '</div>';
     }
 
-    return $site_header . $rendered;
+    // Append custom sections defined in settings.
+    $sections_value = get_option('dfb_sections', '[]');
+    $sections       = json_decode((string) $sections_value, true);
+    if (is_array($sections) && !empty($sections)) {
+        foreach ($sections as $section) {
+            $title = isset($section['title']) ? (string) $section['title'] : '';
+            $body  = isset($section['body']) ? (string) $section['body'] : '';
+            if ($title === '' && $body === '') {
+                continue;
+            }
+
+            $rendered .= '<div class="dfb-custom-section">';
+            if ($title !== '') {
+                $rendered .= '<h3 class="dfb-custom-section-title">' . esc_html($title) . '</h3>';
+            }
+            if ($body !== '') {
+                $rendered .= '<div class="dfb-custom-section-body">' . wp_kses_post($body) . '</div>';
+            }
+            $rendered .= '</div>';
+        }
+    }
+
+    return $header_html . $rendered . $footer_html;
 }
