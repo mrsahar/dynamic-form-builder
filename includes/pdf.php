@@ -125,8 +125,9 @@ function dfb_send_pdf_on_order_completed($order_id) {
         return;
     }
 
-    $subject = 'Your generated document';
-    $message = 'Thank you for your order. Your generated document is attached.';
+    // Allow site owners to customize subject/body via settings, with safe defaults.
+    $subject = (string) get_option('dfb_email_subject', 'Your generated document');
+    $message = (string) get_option('dfb_email_body', 'Thank you for your order. Your generated document is attached.');
     $headers = ['Content-Type: text/html; charset=UTF-8'];
 
     $sent = wp_mail($to, $subject, $message, $headers, [$path]);

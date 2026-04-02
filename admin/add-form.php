@@ -173,6 +173,9 @@ function dfb_render_question_row($index, $question = null) {
     $video_url = $question ? $question->video_url : '';
     $image_url = $question ? $question->image_url : '';
     $input_type = $question ? $question->input_type : 'text';
+    if ($input_type === 'file') {
+        $input_type = 'text';
+    }
     $input_options = $question ? $question->input_options : '';
     $is_required = $question ? $question->is_required : 1;
     
@@ -248,7 +251,6 @@ function dfb_render_question_row($index, $question = null) {
                         <option value="dropdown" <?php selected($input_type, 'dropdown'); ?>>Dropdown</option>
                         <option value="radio" <?php selected($input_type, 'radio'); ?>>Radio Buttons</option>
                         <option value="checkbox" <?php selected($input_type, 'checkbox'); ?>>Checkboxes</option>
-                        <option value="file" <?php selected($input_type, 'file'); ?>>File Upload</option>
                     </select>
                 </td>
             </tr>
@@ -326,13 +328,18 @@ function dfb_save_form_data() {
     // Save questions
     if (isset($_POST['questions']) && is_array($_POST['questions'])) {
         foreach ($_POST['questions'] as $order => $question) {
+            $input_type = sanitize_text_field($question['input_type']);
+            if ($input_type === 'file') {
+                $input_type = 'text';
+            }
+
             $question_data = [
                 'form_id' => $form_id,
                 'question_title' => sanitize_text_field($question['title']),
                 'question_description' => sanitize_textarea_field($question['description']),
                 'video_url' => esc_url_raw($question['video_url']),
                 'image_url' => esc_url_raw($question['image_url']),
-                'input_type' => sanitize_text_field($question['input_type']),
+                'input_type' => $input_type,
                 'input_options' => sanitize_textarea_field($question['options']),
                 'is_required' => isset($question['required']) ? 1 : 0,
                 'question_order' => $order

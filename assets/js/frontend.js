@@ -35,15 +35,47 @@ jQuery(document).ready(function($) {
         }
     }
 
+    function clearStepErrors($step) {
+        $step.find('.dfb-input-wrap')
+            .removeClass('dfb-input-wrap--error')
+            .find('.dfb-error-text').remove();
+    }
+
+    function showFieldError($field, message) {
+        var $wrap = $field.closest('.dfb-input-wrap');
+        if (!$wrap.length) {
+            return;
+        }
+        $wrap.addClass('dfb-input-wrap--error');
+        if (!$wrap.find('.dfb-error-text').length) {
+            $('<p class="dfb-error-text"></p>').text(message).appendTo($wrap);
+        }
+    }
+
     function validateCurrentStep() {
         var valid = true;
         var $current = $('.dfb-step[data-step="' + currentStep + '"]');
 
+        clearStepErrors($current);
+
         // Check normal fields first (text/textarea/select).
         $current.find('input[required]:not([type="checkbox"]):not([type="radio"]), textarea[required], select[required]').each(function() {
-            if (!$(this).val()) {
+            var $field = $(this);
+            var value = $.trim($field.val());
+
+            if (!value) {
                 valid = false;
+                showFieldError($field, 'This field is required.');
                 return false;
+            }
+
+            if ($field.attr('type') === 'email') {
+                var emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+                if (!emailPattern.test(value)) {
+                    valid = false;
+                    showFieldError($field, 'Please enter a valid email address.');
+                    return false;
+                }
             }
         });
 
@@ -55,6 +87,7 @@ jQuery(document).ready(function($) {
             if (!name) return;
             if ($current.find('input[type="radio"][name="' + name + '"]:checked').length === 0) {
                 valid = false;
+                showFieldError($(this), 'Please choose an option.');
                 return false;
             }
         });
@@ -67,6 +100,7 @@ jQuery(document).ready(function($) {
             if (!name) return;
             if ($current.find('input[type="checkbox"][name="' + name + '"]:checked').length === 0) {
                 valid = false;
+                showFieldError($(this), 'Please select at least one option.');
                 return false;
             }
         });
@@ -76,7 +110,6 @@ jQuery(document).ready(function($) {
 
     $nextBtn.on('click', function() {
         if (!validateCurrentStep()) {
-            alert('Please complete required fields before continuing.');
             return;
         }
 

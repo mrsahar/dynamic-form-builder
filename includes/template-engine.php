@@ -56,20 +56,26 @@ function dfb_render_document_template($template_content, $response_row) {
 
     // Build header/footer from plugin settings.
     $header_logo_id  = (int) get_option('dfb_header_logo_id', 0);
-    // Use the full attachment URL so it works reliably in PDF generators.
-    // Dompdf fix: convert URL to absolute file path with file:// prefix
-        if ($header_logo_id) {
-            $attached_file = get_attached_file($header_logo_id);
-            if ($attached_file && file_exists($attached_file)) {
-                $header_logo_url = 'file://' . $attached_file;
-            } else {
-                $header_logo_url = wp_get_attachment_url($header_logo_id); // fallback
-            }
+    if ($header_logo_id) {
+        $attached_file = get_attached_file($header_logo_id);
+        if ($attached_file && file_exists($attached_file)) {
+            $header_logo_url = 'file://' . $attached_file;
         } else {
-            $header_logo_url = '';
-}
+            $header_logo_url = wp_get_attachment_url($header_logo_id); // fallback
+        }
+    } else {
+        $header_logo_url = '';
+    }
     $header_text_opt = (string) get_option('dfb_header_text', '');
     $footer_text_opt = (string) get_option('dfb_footer_text', '');
+
+    // Signature block settings.
+    $signature_title       = (string) get_option('dfb_signature_title', '');
+    $signature_description = (string) get_option('dfb_signature_description', '');
+    $signature_1_label     = (string) get_option('dfb_signature_1_label', '');
+    $signature_1_text      = (string) get_option('dfb_signature_1_text', '');
+    $signature_2_label     = (string) get_option('dfb_signature_2_label', '');
+    $signature_2_text      = (string) get_option('dfb_signature_2_text', '');
 
     $site_name = get_bloginfo('name');
     if (!is_string($site_name)) {
@@ -102,6 +108,14 @@ function dfb_render_document_template($template_content, $response_row) {
     .dfb-custom-section { margin-top: 25px; }
     .dfb-custom-section-title { font-size: 16px; margin: 0 0 8px; }
     .dfb-custom-section-body { font-size: 13px; }
+    .dfb-signature-section { margin-top: 40px; }
+    .dfb-signature-title { font-size: 16px; margin: 0 0 8px; }
+    .dfb-signature-description { font-size: 13px; margin: 0 0 16px; white-space: pre-line; }
+    .dfb-signature-table { width: 100%; margin-top: 30px; border-collapse: collapse; }
+    .dfb-signature-table td { width: 50%; text-align: center; vertical-align: bottom; padding: 0 20px; border: none; }
+    .dfb-signature-line { border-top: 1px solid #000; margin: 40px 0 6px; }
+    .dfb-signature-label { font-weight: bold; font-size: 13px; display: block; }
+    .dfb-signature-text { font-size: 12px; color: #555; margin-top: 2px; }
     .dfb-footer { margin-top: 30px; padding-top: 10px; border-top: 1px solid #ddd; font-size: 11px; color: #666; text-align: center; white-space: pre-line; }
 </style>
 <div class="dfb-header">';
@@ -202,6 +216,54 @@ function dfb_render_document_template($template_content, $response_row) {
             }
             $rendered .= '</div>';
         }
+    }
+
+    // Append signature section above footer, if configured.
+    if (
+        $signature_title !== '' ||
+        $signature_description !== '' ||
+        $signature_1_label !== '' ||
+        $signature_1_text !== '' ||
+        $signature_2_label !== '' ||
+        $signature_2_text !== ''
+    ) {
+        $rendered .= '<div class="dfb-signature-section">';
+
+        if ($signature_title !== '') {
+            $rendered .= '<h3 class="dfb-signature-title">' . esc_html($signature_title) . '</h3>';
+        }
+
+        if ($signature_description !== '') {
+            $rendered .= '<div class="dfb-signature-description">' . wp_kses_post(nl2br($signature_description)) . '</div>';
+        }
+
+        // Use a simple table so both signatures sit on one row reliably in PDFs.
+        $rendered .= '<table class="dfb-signature-table"><tr>';
+
+        // Signature 1 (left cell).
+        $rendered .= '<td>';
+        $rendered .= '<div class="dfb-signature-line"></div>';
+        if ($signature_1_label !== '') {
+            $rendered .= '<span class="dfb-signature-label">' . esc_html($signature_1_label) . '</span>';
+        }
+        if ($signature_1_text !== '') {
+            $rendered .= '<div class="dfb-signature-text">' . wp_kses_post($signature_1_text) . '</div>';
+        }
+        $rendered .= '</td>';
+
+        // Signature 2 (right cell).
+        $rendered .= '<td>';
+        $rendered .= '<div class="dfb-signature-line"></div>';
+        if ($signature_2_label !== '') {
+            $rendered .= '<span class="dfb-signature-label">' . esc_html($signature_2_label) . '</span>';
+        }
+        if ($signature_2_text !== '') {
+            $rendered .= '<div class="dfb-signature-text">' . wp_kses_post($signature_2_text) . '</div>';
+        }
+        $rendered .= '</td>';
+
+        $rendered .= '</tr></table>';
+        $rendered .= '</div>'; // .dfb-signature-section
     }
 
     return $header_html . $rendered . $footer_html;

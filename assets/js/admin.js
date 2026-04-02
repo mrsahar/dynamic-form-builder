@@ -105,7 +105,6 @@ jQuery(document).ready(function($) {
                                 <option value="dropdown">Dropdown</option>
                                 <option value="radio">Radio Buttons</option>
                                 <option value="checkbox">Checkboxes</option>
-                                <option value="file">File Upload</option>
                             </select>
                         </td>
                     </tr>

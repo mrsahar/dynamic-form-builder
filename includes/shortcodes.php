@@ -1,6 +1,153 @@
 <?php
 if (!defined('ABSPATH')) exit;
 
+/**
+ * Human‑readable hint for a question type shown above the field.
+ *
+ * @param string $input_type
+ * @return string
+ */
+function dfb_get_input_type_hint($input_type) {
+    $input_type = (string) $input_type;
+    switch ($input_type) {
+        case 'text':
+            return __('Short text answer', 'dynamic-form-builder');
+        case 'email':
+            return __('Email address (we will validate format)', 'dynamic-form-builder');
+        case 'number':
+            return __('Number only', 'dynamic-form-builder');
+        case 'date':
+            return __('Pick a date', 'dynamic-form-builder');
+        case 'textarea':
+            return __('Longer, free‑form answer', 'dynamic-form-builder');
+        case 'dropdown':
+            return __('Choose one option from the list', 'dynamic-form-builder');
+        case 'radio':
+            return __('Choose one option', 'dynamic-form-builder');
+        case 'checkbox':
+            return __('You can select more than one option', 'dynamic-form-builder');
+        default:
+            return '';
+    }
+}
+
+/**
+ * Normalize a pasted video URL (e.g. www.youtube.com/... without scheme).
+ *
+ * @param string $url Raw URL.
+ * @return string Sanitized URL or empty string.
+ */
+function dfb_normalize_video_url($url) {
+    $url = trim((string) $url);
+    if ($url === '') {
+        return '';
+    }
+    if (!preg_match('~^https?://~i', $url)) {
+        $url = 'https://' . ltrim($url, '/');
+    }
+    $clean = esc_url_raw($url);
+    return is_string($clean) ? $clean : '';
+}
+
+/**
+ * Extract YouTube video ID from common URL shapes (watch, shorts, embed, youtu.be, live).
+ *
+ * @param string $url Full URL.
+ * @return string Video ID or empty string.
+ */
+function dfb_extract_youtube_video_id($url) {
+    $url = (string) $url;
+    $patterns = [
+        '~[?&]v=([^&]+)~',
+        '~youtu\\.be/([^/?&#]+)~i',
+        '~youtube\\.com/embed/([^/?&#]+)~i',
+        '~youtube-nocookie\\.com/embed/([^/?&#]+)~i',
+        '~youtube\\.com/shorts/([^/?&#]+)~i',
+        '~youtube\\.com/live/([^/?&#]+)~i',
+        '~youtube\\.com/v/([^/?&#]+)~i',
+    ];
+    foreach ($patterns as $pattern) {
+        if (preg_match($pattern, $url, $m)) {
+            $id = $m[1];
+            if (strpos($id, '?') !== false) {
+                $id = strstr($id, '?', true);
+            }
+            $id = preg_replace('~[^0-9A-Za-z_-]~', '', $id);
+            return $id !== '' ? $id : '';
+        }
+    }
+    return '';
+}
+
+/**
+ * Extract numeric Vimeo video ID.
+ *
+ * @param string $url Full URL.
+ * @return string Video ID or empty string.
+ */
+function dfb_extract_vimeo_video_id($url) {
+    $url = (string) $url;
+    if (preg_match('~vimeo\\.com/(?:video/)?(\d+)~', $url, $m)) {
+        return $m[1];
+    }
+    if (preg_match('~player\\.vimeo\\.com/video/(\d+)~', $url, $m)) {
+        return $m[1];
+    }
+    return '';
+}
+
+/**
+ * Build responsive embed markup for a question video URL.
+ *
+ * @param string $raw_url Value from question.video_url.
+ * @return string HTML safe to print (iframes from trusted providers).
+ */
+function dfb_render_question_video_embed($raw_url) {
+    $trimmed = trim((string) $raw_url);
+    if ($trimmed === '') {
+        return '';
+    }
+
+    $url = dfb_normalize_video_url($raw_url);
+    // If sanitization stripped the URL, still try ID extraction from the raw paste.
+    $for_parse = $url !== '' ? $url : $trimmed;
+
+    // WordPress oEmbed: YouTube, Vimeo, and many others (uses HTTP request).
+    if ($url !== '' && function_exists('wp_oembed_get')) {
+        $oembed = wp_oembed_get($url, [
+            'width'    => 640,
+            'height'   => 360,
+            'discover' => true,
+        ]);
+        if ($oembed) {
+            return '<div class="dfb-step-media dfb-video-embed"><div class="dfb-video-embed-inner">' . $oembed . '</div></div>';
+        }
+    }
+
+    // Manual iframes when oEmbed fails (offline, blocked HTTP, Shorts/embed URLs, etc.).
+    $yt_id = dfb_extract_youtube_video_id($for_parse);
+    if ($yt_id !== '') {
+        $embed_src = 'https://www.youtube.com/embed/' . rawurlencode($yt_id);
+        return '<div class="dfb-step-media dfb-video-embed"><div class="dfb-video-embed-inner"><iframe src="' . esc_url($embed_src) . '" loading="lazy" title="' . esc_attr__('Help video', 'dynamic-form-builder') . '" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe></div></div>';
+    }
+
+    $vm_id = dfb_extract_vimeo_video_id($for_parse);
+    if ($vm_id !== '') {
+        $embed_src = 'https://player.vimeo.com/video/' . rawurlencode($vm_id);
+        return '<div class="dfb-step-media dfb-video-embed"><div class="dfb-video-embed-inner"><iframe src="' . esc_url($embed_src) . '" loading="lazy" title="' . esc_attr__('Help video', 'dynamic-form-builder') . '" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen></iframe></div></div>';
+    }
+
+    $fallback_href = $url;
+    if ($fallback_href === '' && $trimmed !== '') {
+        $fallback_href = dfb_normalize_video_url($trimmed);
+        if ($fallback_href === '') {
+            $fallback_href = esc_url_raw('https://' . ltrim(preg_replace('~^https?://~i', '', $trimmed), '/'));
+        }
+    }
+
+    return '<p class="dfb-step-media"><a class="dfb-inline-link" href="' . esc_url($fallback_href !== '' ? $fallback_href : '#') . '" target="_blank" rel="noopener noreferrer">' . esc_html__('Watch help video', 'dynamic-form-builder') . '</a></p>';
+}
+
 add_shortcode('dfb_form', 'dfb_form_shortcode');
 
 function dfb_form_shortcode($atts) {
@@ -68,21 +215,28 @@ function dfb_form_shortcode($atts) {
                     <?php endif; ?>
 
                     <?php if (!empty($question->video_url)): ?>
-                        <p><a href="<?php echo esc_url($question->video_url); ?>" target="_blank" rel="noopener noreferrer">Watch help video</a></p>
+                        <?php
+                        echo dfb_render_question_video_embed($question->video_url); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- oEmbed + escaped iframe src
+                        ?>
                     <?php endif; ?>
 
                     <?php if (!empty($question->image_url)): ?>
-                        <p><img src="<?php echo esc_url($question->image_url); ?>" alt="" style="max-width: 100%; height: auto;"></p>
+                        <p class="dfb-step-media"><img class="dfb-step-image" src="<?php echo esc_url($question->image_url); ?>" alt=""></p>
                     <?php endif; ?>
 
                     <?php
                     $input_name = 'answers[question_' . intval($index + 1) . ']';
-                    $required = intval($question->is_required) === 1 ? 'required' : '';
+                    $required   = intval($question->is_required) === 1 ? 'required' : '';
                     $input_type = $question->input_type;
-                    $options = array_filter(array_map('trim', explode("\n", (string) $question->input_options)));
+                    $options    = array_filter(array_map('trim', explode("\n", (string) $question->input_options)));
+                    $hint       = dfb_get_input_type_hint($input_type);
                     ?>
 
-                    <div class="dfb-input-wrap">
+                    <?php if ($hint !== ''): ?>
+                        <p class="dfb-field-hint"><?php echo esc_html($hint); ?></p>
+                    <?php endif; ?>
+
+                    <div class="dfb-input-wrap" data-dfb-input-type="<?php echo esc_attr($input_type); ?>">
                         <?php if (in_array($input_type, ['text', 'email', 'number', 'date'], true)): ?>
                             <input type="<?php echo esc_attr($input_type); ?>" name="<?php echo esc_attr($input_name); ?>" <?php echo $required; ?>>
                         <?php elseif ($input_type === 'textarea'): ?>
@@ -95,13 +249,17 @@ function dfb_form_shortcode($atts) {
                                 <?php endforeach; ?>
                             </select>
                         <?php elseif ($input_type === 'radio'): ?>
-                            <?php foreach ($options as $option): ?>
-                                <label><input type="radio" name="<?php echo esc_attr($input_name); ?>" value="<?php echo esc_attr($option); ?>" <?php echo $required; ?>> <?php echo esc_html($option); ?></label><br>
-                            <?php endforeach; ?>
+                            <div class="dfb-choice-group" role="group">
+                                <?php foreach ($options as $option): ?>
+                                    <label class="dfb-choice"><input type="radio" name="<?php echo esc_attr($input_name); ?>" value="<?php echo esc_attr($option); ?>" <?php echo $required; ?>><span class="dfb-choice-text"><?php echo esc_html($option); ?></span></label>
+                                <?php endforeach; ?>
+                            </div>
                         <?php elseif ($input_type === 'checkbox'): ?>
-                            <?php foreach ($options as $option): ?>
-                                <label><input type="checkbox" name="<?php echo esc_attr($input_name); ?>[]" value="<?php echo esc_attr($option); ?>" <?php echo $required; ?>> <?php echo esc_html($option); ?></label><br>
-                            <?php endforeach; ?>
+                            <div class="dfb-choice-group" role="group">
+                                <?php foreach ($options as $option): ?>
+                                    <label class="dfb-choice"><input type="checkbox" name="<?php echo esc_attr($input_name); ?>[]" value="<?php echo esc_attr($option); ?>" <?php echo $required; ?>><span class="dfb-choice-text"><?php echo esc_html($option); ?></span></label>
+                                <?php endforeach; ?>
+                            </div>
                         <?php else: ?>
                             <input type="text" name="<?php echo esc_attr($input_name); ?>" <?php echo $required; ?>>
                         <?php endif; ?>
@@ -110,9 +268,9 @@ function dfb_form_shortcode($atts) {
             <?php endforeach; ?>
 
             <div class="dfb-nav-buttons">
-                <button type="button" class="button" id="dfb-prev-btn" style="display:none;">Back</button>
-                <button type="button" class="button button-primary" id="dfb-next-btn">Next</button>
-                <button type="submit" name="dfb_front_submit" class="button button-primary" id="dfb-submit-btn" style="display:none;">Continue to Checkout</button>
+                <button type="button" class="dfb-btn dfb-btn--secondary" id="dfb-prev-btn" style="display:none;"><?php echo esc_html__('Back', 'dynamic-form-builder'); ?></button>
+                <button type="button" class="dfb-btn dfb-btn--primary" id="dfb-next-btn"><?php echo esc_html__('Next', 'dynamic-form-builder'); ?></button>
+                <button type="submit" name="dfb_front_submit" class="dfb-btn dfb-btn--primary" id="dfb-submit-btn" style="display:none;"><?php echo esc_html__('Continue to Checkout', 'dynamic-form-builder'); ?></button>
             </div>
         </form>
     </div>
