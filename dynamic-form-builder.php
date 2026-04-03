@@ -2,14 +2,14 @@
 /**
  * Plugin Name: Dynamic Form & Document Generator
  * Description: Create dynamic forms, integrate with WooCommerce, generate PDF documents
- * Version: 1.0
+ * Version: 1.1.0
  * Author: Sahar
  */
 
 if (!defined('ABSPATH')) exit;
 
 // Plugin constants
-define('DFB_VERSION', '1.0');
+define('DFB_VERSION', '1.1.0');
 define('DFB_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('DFB_PLUGIN_URL', plugin_dir_url(__FILE__));
 

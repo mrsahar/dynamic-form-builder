@@ -102,6 +102,7 @@ jQuery(document).ready(function($) {
                                 <option value="email">Email</option>
                                 <option value="number">Number</option>
                                 <option value="date">Date Picker</option>
+                                <option value="yes_no">Yes / No</option>
                                 <option value="dropdown">Dropdown</option>
                                 <option value="radio">Radio Buttons</option>
                                 <option value="checkbox">Checkboxes</option>

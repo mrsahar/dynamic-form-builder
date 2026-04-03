@@ -132,7 +132,9 @@ function dfb_add_form_page() {
                         <code>{{question_1}}</code> - Answer to Question 1<br>
                         <code>{{question_2}}</code> - Answer to Question 2<br>
                         <code>{{current_date}}</code> - Current date<br>
-                        And so on for each question...
+                        And so on for each question...<br><br>
+                        <strong>Conditional blocks (PDF / document template):</strong><br>
+                        <code>{{#if question_1}}...{{else}}...{{/if}}</code> — show the first part when Question 1 is “yes-like” (non-empty and not No/False/0), otherwise the part after <code>{{else}}</code>. You can use <code>question_1</code>, <code>1</code>, or <code>q1</code> as the key. Omit <code>{{else}}...{{/if}}</code> for a simple on/off block.
                     </p>
                     
                     <?php
@@ -146,7 +148,10 @@ function dfb_add_form_page() {
                     ?>
                     
                     <p class="description" style="margin-top: 10px;">
-                        Example: "This agreement is made on {{current_date}} between {{question_1}} and {{question_2}}..."
+                        <?php esc_html_e('Example: "This agreement is made on {{current_date}} between {{question_1}} and {{question_2}}..."', 'dynamic-form-builder'); ?>
+                    </p>
+                    <p class="description" style="color:#646970;">
+                        <?php esc_html_e('Tip: Type your document here using placeholders only. Do not copy the gray help text above into the editor — that text would appear in the PDF.', 'dynamic-form-builder'); ?>
                     </p>
                 </div>
             </div>
@@ -254,13 +259,14 @@ function dfb_render_question_row($index, $question = null) {
                         <option value="email" <?php selected($input_type, 'email'); ?>>Email</option>
                         <option value="number" <?php selected($input_type, 'number'); ?>>Number</option>
                         <option value="date" <?php selected($input_type, 'date'); ?>>Date Picker</option>
+                        <option value="yes_no" <?php selected($input_type, 'yes_no'); ?>>Yes / No</option>
                         <option value="dropdown" <?php selected($input_type, 'dropdown'); ?>>Dropdown</option>
                         <option value="radio" <?php selected($input_type, 'radio'); ?>>Radio Buttons</option>
                         <option value="checkbox" <?php selected($input_type, 'checkbox'); ?>>Checkboxes</option>
                     </select>
                 </td>
             </tr>
-            <tr class="options-row" style="display: <?php echo in_array($input_type, ['dropdown', 'radio', 'checkbox']) ? 'table-row' : 'none'; ?>;">
+            <tr class="options-row" style="display: <?php echo in_array($input_type, ['dropdown', 'radio', 'checkbox'], true) ? 'table-row' : 'none'; ?>;">
                 <th><label>Options</label></th>
                 <td>
                     <textarea name="questions[<?php echo $index; ?>][options]" 
@@ -310,6 +316,55 @@ function dfb_render_question_row($index, $question = null) {
     return ob_get_clean();
 }
 
+/**
+ * Create (or reuse) a WordPress Page for a form shortcode.
+ *
+ * @param int    $form_id
+ * @param string $form_name
+ * @return int Page ID or 0 on failure.
+ */
+function dfb_ensure_form_page($form_id, $form_name) {
+    $form_id = (int) $form_id;
+    if ($form_id <= 0 || !function_exists('wp_insert_post')) {
+        return 0;
+    }
+
+    // Reuse any existing page already associated with this form.
+    $existing = get_posts([
+        'post_type'      => 'page',
+        'post_status'    => ['publish', 'draft', 'pending', 'private'],
+        'fields'         => 'ids',
+        'posts_per_page' => 1,
+        'meta_key'       => '_dfb_form_id',
+        'meta_value'     => (string) $form_id,
+    ]);
+    if (!empty($existing) && isset($existing[0])) {
+        return (int) $existing[0];
+    }
+
+    $title = $form_name !== '' ? $form_name : ('Form ' . $form_id);
+
+    $page_id = wp_insert_post([
+        'post_type'    => 'page',
+        'post_status'  => 'publish',
+        'post_title'   => $title,
+        'post_content' => '[dfb_form id="' . $form_id . '"]',
+    ], true);
+
+    if (is_wp_error($page_id)) {
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            error_log('DFB: failed to create form page for form ' . $form_id . ' => ' . $page_id->get_error_message());
+        }
+        return 0;
+    }
+
+    $page_id = (int) $page_id;
+    if ($page_id > 0) {
+        update_post_meta($page_id, '_dfb_form_id', (string) $form_id);
+    }
+    return $page_id;
+}
+
 // Save form data
 function dfb_save_form_data() {
     if (!isset($_POST['dfb_nonce']) || !wp_verify_nonce($_POST['dfb_nonce'], 'dfb_save_form')) {
@@ -323,6 +378,7 @@ function dfb_save_form_data() {
     global $wpdb;
     
     $form_id = intval($_POST['form_id']);
+    $is_new_form = $form_id <= 0;
     $form_name = sanitize_text_field($_POST['form_name']);
     $woo_product_id = intval($_POST['woo_product_id']);
     $is_active = isset($_POST['is_active']) ? 1 : 0;
@@ -348,6 +404,11 @@ function dfb_save_form_data() {
     } else {
         $wpdb->insert($wpdb->prefix . 'dfb_forms', $form_data);
         $form_id = $wpdb->insert_id;
+    }
+
+    // Auto-create a page for new forms.
+    if ($is_new_form && $form_id > 0) {
+        dfb_ensure_form_page($form_id, $form_name);
     }
     
     // Delete old questions

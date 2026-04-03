@@ -72,7 +72,7 @@ jQuery(document).ready(function($) {
             return selected.indexOf(depValueStr) !== -1;
         }
 
-        if (parentType === 'radio') {
+        if (parentType === 'radio' || parentType === 'yes_no') {
             var parentRadioName = 'answers[question_' + parentOrder + ']';
             var $checked = $form.find('input[type="radio"][name="' + parentRadioName + '"]:checked');
             if (!$checked.length) return false;

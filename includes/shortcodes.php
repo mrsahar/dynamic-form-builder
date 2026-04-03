@@ -26,6 +26,8 @@ function dfb_get_input_type_hint($input_type) {
             return __('Choose one option', 'dynamic-form-builder');
         case 'checkbox':
             return __('You can select more than one option', 'dynamic-form-builder');
+        case 'yes_no':
+            return __('Choose Yes or No', 'dynamic-form-builder');
         default:
             return '';
     }
@@ -262,6 +264,11 @@ function dfb_form_shortcode($atts) {
                                     <label class="dfb-choice"><input type="radio" name="<?php echo esc_attr($input_name); ?>" value="<?php echo esc_attr($option); ?>" <?php echo $required; ?>><span class="dfb-choice-text"><?php echo esc_html($option); ?></span></label>
                                 <?php endforeach; ?>
                             </div>
+                        <?php elseif ($input_type === 'yes_no'): ?>
+                            <div class="dfb-choice-group" role="group">
+                                <label class="dfb-choice"><input type="radio" name="<?php echo esc_attr($input_name); ?>" value="Yes" <?php echo $required; ?>><span class="dfb-choice-text"><?php echo esc_html__('Yes', 'dynamic-form-builder'); ?></span></label>
+                                <label class="dfb-choice"><input type="radio" name="<?php echo esc_attr($input_name); ?>" value="No" <?php echo $required; ?>><span class="dfb-choice-text"><?php echo esc_html__('No', 'dynamic-form-builder'); ?></span></label>
+                            </div>
                         <?php elseif ($input_type === 'checkbox'): ?>
                             <div class="dfb-choice-group" role="group">
                                 <?php foreach ($options as $option): ?>
@@ -343,7 +350,7 @@ function dfb_handle_frontend_form_submit($form, $questions) {
                 if ($parent_type === 'checkbox') {
                     $parent_vals = is_array($parent_raw_value) ? $parent_raw_value : [];
                     $is_visible = in_array($expected_value, $parent_vals, true);
-                } elseif ($parent_type === 'radio' || $parent_type === 'dropdown') {
+                } elseif ($parent_type === 'radio' || $parent_type === 'dropdown' || $parent_type === 'yes_no') {
                     $parent_str = is_array($parent_raw_value) ? '' : (string) $parent_raw_value;
                     $is_visible = $parent_str === $expected_value;
                 } else {

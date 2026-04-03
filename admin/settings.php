@@ -6,63 +6,70 @@ function dfb_settings_page() {
         wp_die('Unauthorized access');
     }
 
+    /**
+     * Update an option only when the field exists in POST.
+     * This prevents saving one tab from wiping settings from other tabs.
+     *
+     * @param string        $post_key
+     * @param string        $option_name
+     * @param callable|null $sanitize_cb Receives raw (unslashed) value.
+     * @return void
+     */
+    $dfb_update_option_if_posted = static function ($post_key, $option_name, $sanitize_cb = null) {
+        if (!array_key_exists($post_key, $_POST)) {
+            return;
+        }
+        $raw = wp_unslash($_POST[$post_key]);
+        $value = is_callable($sanitize_cb) ? call_user_func($sanitize_cb, $raw) : $raw;
+        update_option($option_name, $value);
+    };
+
     // Handle form submission
     if (isset($_POST['dfb_settings_submit'])) {
         check_admin_referer('dfb_save_settings', 'dfb_settings_nonce');
 
-        $logo_id     = isset($_POST['dfb_header_logo_id']) ? intval($_POST['dfb_header_logo_id']) : 0;
-        $header_text = isset($_POST['dfb_header_text']) ? wp_kses_post(wp_unslash($_POST['dfb_header_text'])) : '';
-        $footer_text = isset($_POST['dfb_footer_text']) ? wp_kses_post(wp_unslash($_POST['dfb_footer_text'])) : '';
+        // General settings.
+        $dfb_update_option_if_posted('dfb_header_logo_id', 'dfb_header_logo_id', static fn($v) => intval($v));
+        $dfb_update_option_if_posted('dfb_header_text', 'dfb_header_text', static fn($v) => wp_kses_post((string) $v));
+        $dfb_update_option_if_posted('dfb_footer_text', 'dfb_footer_text', static fn($v) => wp_kses_post((string) $v));
+        // Checkbox only: when unchecked it is absent from POST (do not use a duplicate-name hidden field — PHP may merge values into an array).
+        update_option(
+            'dfb_hide_questions_in_pdf',
+            isset($_POST['dfb_hide_questions_in_pdf']) && (string) wp_unslash($_POST['dfb_hide_questions_in_pdf']) === '1' ? 1 : 0
+        );
+
+        // Sections JSON (stored as JSON string).
+        if (array_key_exists('dfb_sections_data', $_POST)) {
+            $sections_raw = (string) wp_unslash($_POST['dfb_sections_data']);
+            $sections_decoded = json_decode($sections_raw, true);
+            if (!is_array($sections_decoded)) {
+                $sections_decoded = [];
+            }
+            $clean_sections = [];
+            foreach ($sections_decoded as $section) {
+                $title = isset($section['title']) ? sanitize_text_field((string) $section['title']) : '';
+                $body  = isset($section['body']) ? wp_kses_post((string) $section['body']) : '';
+                if ($title !== '' || $body !== '') {
+                    $clean_sections[] = [
+                        'title' => $title,
+                        'body'  => $body,
+                    ];
+                }
+            }
+            update_option('dfb_sections', wp_json_encode($clean_sections));
+        }
 
         // Email settings.
-        $email_subject = isset($_POST['dfb_email_subject'])
-            ? sanitize_text_field(wp_unslash($_POST['dfb_email_subject']))
-            : '';
-        $email_body = isset($_POST['dfb_email_body'])
-            ? wp_kses_post(wp_unslash($_POST['dfb_email_body']))
-            : '';
+        $dfb_update_option_if_posted('dfb_email_subject', 'dfb_email_subject', static fn($v) => sanitize_text_field((string) $v));
+        $dfb_update_option_if_posted('dfb_email_body', 'dfb_email_body', static fn($v) => wp_kses_post((string) $v));
 
         // Signature settings.
-        $signature_title       = isset($_POST['dfb_signature_title']) ? sanitize_text_field(wp_unslash($_POST['dfb_signature_title'])) : '';
-        $signature_description = isset($_POST['dfb_signature_description']) ? wp_kses_post(wp_unslash($_POST['dfb_signature_description'])) : '';
-        $signature_1_label     = isset($_POST['dfb_signature_1_label']) ? sanitize_text_field(wp_unslash($_POST['dfb_signature_1_label'])) : '';
-        $signature_1_text      = isset($_POST['dfb_signature_1_text']) ? wp_kses_post(wp_unslash($_POST['dfb_signature_1_text'])) : '';
-        $signature_2_label     = isset($_POST['dfb_signature_2_label']) ? sanitize_text_field(wp_unslash($_POST['dfb_signature_2_label'])) : '';
-        $signature_2_text      = isset($_POST['dfb_signature_2_text']) ? wp_kses_post(wp_unslash($_POST['dfb_signature_2_text'])) : '';
-
-        $sections_raw = isset($_POST['dfb_sections_data']) ? wp_unslash($_POST['dfb_sections_data']) : '[]';
-        $sections_decoded = json_decode($sections_raw, true);
-        if (!is_array($sections_decoded)) {
-            $sections_decoded = [];
-        }
-        $clean_sections = [];
-        foreach ($sections_decoded as $section) {
-            $title = isset($section['title']) ? sanitize_text_field($section['title']) : '';
-            $body  = isset($section['body']) ? wp_kses_post($section['body']) : '';
-            if ($title !== '' || $body !== '') {
-                $clean_sections[] = [
-                    'title' => $title,
-                    'body'  => $body,
-                ];
-            }
-        }
-
-        update_option('dfb_header_logo_id', $logo_id);
-        update_option('dfb_header_text', $header_text);
-        update_option('dfb_footer_text', $footer_text);
-        update_option('dfb_sections', wp_json_encode($clean_sections));
-
-        // Persist email settings.
-        update_option('dfb_email_subject', $email_subject);
-        update_option('dfb_email_body', $email_body);
-
-        // Persist signature settings.
-        update_option('dfb_signature_title', $signature_title);
-        update_option('dfb_signature_description', $signature_description);
-        update_option('dfb_signature_1_label', $signature_1_label);
-        update_option('dfb_signature_1_text', $signature_1_text);
-        update_option('dfb_signature_2_label', $signature_2_label);
-        update_option('dfb_signature_2_text', $signature_2_text);
+        $dfb_update_option_if_posted('dfb_signature_title', 'dfb_signature_title', static fn($v) => sanitize_text_field((string) $v));
+        $dfb_update_option_if_posted('dfb_signature_description', 'dfb_signature_description', static fn($v) => wp_kses_post((string) $v));
+        $dfb_update_option_if_posted('dfb_signature_1_label', 'dfb_signature_1_label', static fn($v) => sanitize_text_field((string) $v));
+        $dfb_update_option_if_posted('dfb_signature_1_text', 'dfb_signature_1_text', static fn($v) => wp_kses_post((string) $v));
+        $dfb_update_option_if_posted('dfb_signature_2_label', 'dfb_signature_2_label', static fn($v) => sanitize_text_field((string) $v));
+        $dfb_update_option_if_posted('dfb_signature_2_text', 'dfb_signature_2_text', static fn($v) => wp_kses_post((string) $v));
 
         echo '<div class="updated notice is-dismissible"><p>' . esc_html__('Settings saved.', 'dynamic-form-builder') . '</p></div>';
     }
@@ -76,6 +83,8 @@ function dfb_settings_page() {
     if (!is_array($sections)) {
         $sections = [];
     }
+
+    $hide_questions_in_pdf = (int) get_option('dfb_hide_questions_in_pdf', 0) === 1;
 
     // Load signature settings.
     $signature_title       = (string) get_option('dfb_signature_title', '');
@@ -162,6 +171,19 @@ function dfb_settings_page() {
                                     <button type="button" class="button" id="dfb-add-section"><?php esc_html_e('Add Section', 'dynamic-form-builder'); ?></button>
                                 </p>
                                 <input type="hidden" id="dfb_sections_data" name="dfb_sections_data" value="<?php echo esc_attr(wp_json_encode($sections)); ?>">
+                            </td>
+                        </tr>
+
+                        <tr>
+                            <th scope="row"><?php esc_html_e('PDF output', 'dynamic-form-builder'); ?></th>
+                            <td>
+                                <label for="dfb_hide_questions_in_pdf">
+                                    <input type="checkbox" name="dfb_hide_questions_in_pdf" id="dfb_hide_questions_in_pdf" value="1" <?php checked($hide_questions_in_pdf); ?>>
+                                    <?php esc_html_e('Hide the questions in PDF', 'dynamic-form-builder'); ?>
+                                </label>
+                                <p class="description">
+                                    <?php esc_html_e('When checked, question titles are hidden in the automatic answers list; answer values still appear. Your document template can still use placeholders such as {{question_1}}.', 'dynamic-form-builder'); ?>
+                                </p>
                             </td>
                         </tr>
                     </tbody>
