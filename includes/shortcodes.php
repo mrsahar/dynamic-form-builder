@@ -19,7 +19,7 @@ function dfb_get_input_type_hint($input_type) {
         case 'date':
             return __('Pick a date', 'dynamic-form-builder');
         case 'textarea':
-            return __('Longer, free‑form answer', 'dynamic-form-builder');
+            return __('Longer, free-form answer', 'dynamic-form-builder');
         case 'dropdown':
             return __('Choose one option from the list', 'dynamic-form-builder');
         case 'radio':
@@ -161,7 +161,7 @@ function dfb_form_shortcode($atts) {
 
     $form_id = intval($atts['id']);
     if ($form_id <= 0) {
-        return '<p>Invalid form ID.</p>';
+        return '<p>' . esc_html__('Invalid form ID.', 'dynamic-form-builder') . '</p>';
     }
 
     if (!is_user_logged_in()) {
@@ -178,7 +178,7 @@ function dfb_form_shortcode($atts) {
     ));
 
     if (!$form) {
-        return '<p>This form is unavailable.</p>';
+        return '<p>' . esc_html__('This form is unavailable.', 'dynamic-form-builder') . '</p>';
     }
 
     $questions = $wpdb->get_results($wpdb->prepare(
@@ -187,7 +187,7 @@ function dfb_form_shortcode($atts) {
     ));
 
     if (empty($questions)) {
-        return '<p>No questions configured for this form.</p>';
+        return '<p>' . esc_html__('No questions configured for this form.', 'dynamic-form-builder') . '</p>';
     }
 
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['dfb_front_submit'])) {
@@ -197,9 +197,22 @@ function dfb_form_shortcode($atts) {
     wp_enqueue_style('dfb-frontend-css', DFB_PLUGIN_URL . 'assets/css/frontend.css', [], DFB_VERSION);
     wp_enqueue_script('dfb-frontend-js', DFB_PLUGIN_URL . 'assets/js/frontend.js', ['jquery'], DFB_VERSION, true);
 
+    wp_localize_script(
+        'dfb-frontend-js',
+        'dfbFrontendL10n',
+        [
+            /* translators: 1: current step number, 2: total visible steps */
+            'stepProgress'     => __( 'Step %1$d of %2$d', 'dynamic-form-builder' ),
+            'fieldRequired'    => __( 'This field is required.', 'dynamic-form-builder' ),
+            'emailInvalid'     => __( 'Please enter a valid email address.', 'dynamic-form-builder' ),
+            'chooseOption'     => __( 'Please choose an option.', 'dynamic-form-builder' ),
+            'selectAtLeastOne' => __( 'Please select at least one option.', 'dynamic-form-builder' ),
+        ]
+    );
+
     ob_start();
     ?>
-    <div class="dfb-frontend-wrap">
+    <div class="dfb-frontend-wrap" data-dfb-step-progress="<?php echo esc_attr( __( 'Step %1$d of %2$d', 'dynamic-form-builder' ) ); ?>">
         <div class="dfb-progress">
             <div class="dfb-progress-bar" id="dfb-progress-bar"></div>
         </div>
@@ -219,9 +232,20 @@ function dfb_form_shortcode($atts) {
                          data-dfb-dep-value="<?php echo esc_attr((string) $question->depends_on_value); ?>"
                      <?php endif; ?>
                      style="display: <?php echo $index === 0 ? 'block' : 'none'; ?>;">
-                    <h3><?php echo esc_html($question->question_title); ?></h3>
-                    <?php if (!empty($question->question_description)): ?>
-                        <p><?php echo esc_html($question->question_description); ?></p>
+                    <?php
+                    $qid = isset($question->id) ? intval($question->id) : 0;
+                    $title_raw = (string) ($question->question_title ?? '');
+                    $desc_raw  = (string) ($question->question_description ?? '');
+                    $title_key = 'form_' . intval($form->id) . '_q_' . ($qid > 0 ? $qid : intval($index + 1)) . '_title';
+                    $desc_key  = 'form_' . intval($form->id) . '_q_' . ($qid > 0 ? $qid : intval($index + 1)) . '_description';
+                    dfb_register_i18n_string($title_raw, $title_key);
+                    dfb_register_i18n_string($desc_raw, $desc_key);
+                    $title = dfb_translate_i18n_string($title_raw, $title_key);
+                    $desc  = dfb_translate_i18n_string($desc_raw, $desc_key);
+                    ?>
+                    <h3><?php echo esc_html($title); ?></h3>
+                    <?php if ($desc !== ''): ?>
+                        <p><?php echo esc_html($desc); ?></p>
                     <?php endif; ?>
 
                     <?php if (!empty($question->video_url)): ?>
@@ -253,7 +277,7 @@ function dfb_form_shortcode($atts) {
                             <textarea name="<?php echo esc_attr($input_name); ?>" <?php echo $required; ?>></textarea>
                         <?php elseif ($input_type === 'dropdown'): ?>
                             <select name="<?php echo esc_attr($input_name); ?>" <?php echo $required; ?>>
-                                <option value="">Select an option</option>
+                                <option value=""><?php echo esc_html__('Select an option', 'dynamic-form-builder'); ?></option>
                                 <?php foreach ($options as $option): ?>
                                     <option value="<?php echo esc_attr($option); ?>"><?php echo esc_html($option); ?></option>
                                 <?php endforeach; ?>
@@ -295,12 +319,12 @@ function dfb_form_shortcode($atts) {
 
 function dfb_handle_frontend_form_submit($form, $questions) {
     if (!isset($_POST['dfb_front_nonce']) || !wp_verify_nonce($_POST['dfb_front_nonce'], 'dfb_front_submit_' . $form->id)) {
-        return '<p>Security check failed.</p>';
+        return '<p>' . esc_html__('Security check failed.', 'dynamic-form-builder') . '</p>';
     }
 
     $user_id = get_current_user_id();
     if (!$user_id) {
-        return '<p>Please login to continue.</p>';
+        return '<p>' . esc_html__('Please login to continue.', 'dynamic-form-builder') . '</p>';
     }
 
     $guard_key = 'dfb_submit_guard_' . $user_id . '_' . $form->id;
@@ -377,7 +401,7 @@ function dfb_handle_frontend_form_submit($form, $questions) {
         }
 
         if (intval($question->is_required) === 1 && $answers[$key] === '') {
-            return '<p>Please answer all required questions.</p>';
+            return '<p>' . esc_html__('Please answer all required questions.', 'dynamic-form-builder') . '</p>';
         }
     }
 
@@ -395,12 +419,12 @@ function dfb_handle_frontend_form_submit($form, $questions) {
         if ($error !== '' && function_exists('current_user_can') && current_user_can('manage_options')) {
             return '<p>Could not save your response. Please try again. DB error: <code>' . esc_html($error) . '</code></p>';
         }
-        return '<p>Could not save your response. Please try again.</p>';
+        return '<p>' . esc_html__('Could not save your response. Please try again.', 'dynamic-form-builder') . '</p>';
     }
 
     set_transient($guard_key, $response_id, 20 * MINUTE_IN_SECONDS);
     dfb_redirect_to_checkout_with_response(intval($form->woo_product_id), $response_id);
-    return '<p>Redirecting to checkout...</p>';
+    return '<p>' . esc_html__('Redirecting to checkout...', 'dynamic-form-builder') . '</p>';
 }
 
 function dfb_create_form_response($form_id, $user_id, $user_email, $user_name, $answers) {

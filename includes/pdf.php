@@ -257,6 +257,9 @@ function dfb_send_pdf_on_order_completed($order_id) {
     if (empty($to)) {
         return;
     }
+    // Persist recipient email so Generated Documents can display the real "sent to" address.
+    $order->update_meta_data('_dfb_pdf_email_to', sanitize_email((string) $to));
+    $order->save_meta_data();
 
     $attachment_path = wp_normalize_path($path);
     if (!is_readable($attachment_path)) {
@@ -266,8 +269,8 @@ function dfb_send_pdf_on_order_completed($order_id) {
     }
 
     // Allow site owners to customize subject/body via settings, with safe defaults.
-    $subject = (string) get_option('dfb_email_subject', 'Your generated document');
-    $message = (string) get_option('dfb_email_body', 'Thank you for your order. Your generated document is attached.');
+    $subject = (string) get_option('dfb_email_subject', __('Your generated document', 'dynamic-form-builder'));
+    $message = (string) get_option('dfb_email_body', __('Thank you for your order. Your generated document is attached.', 'dynamic-form-builder'));
     $headers = ['Content-Type: text/html; charset=UTF-8'];
 
     // Prefer WooCommerce “From” (same as order emails) so deliverability matches store mail.

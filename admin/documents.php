@@ -118,7 +118,7 @@ function dfb_documents_page() {
     <div class="wrap">
         <h1><?php esc_html_e('Generated Documents', 'dynamic-form-builder'); ?></h1>
         <p class="description">
-            <?php esc_html_e('If a row shows “PDF emailed” but the customer did not receive mail, your server often accepts wp_mail without delivering. Install WP Mail SMTP (or similar) and test. Status reflects WordPress mail success, not inbox delivery.', 'dynamic-form-builder'); ?>
+            <?php esc_html_e('If a row shows "PDF emailed" but the customer did not receive mail, your server often accepts wp_mail without delivering. Install WP Mail SMTP (or similar) and test. Status reflects WordPress mail success, not inbox delivery.', 'dynamic-form-builder'); ?>
         </p>
 
         <?php if (!empty($cleanup['deleted'])): ?>
@@ -190,23 +190,39 @@ function dfb_documents_page() {
                             }
                         }
 
+                        // Prefer the real recipient email (where the PDF was emailed).
+                        $display_email = (string) ($row->user_email ?? '');
+                        if (!empty($order) && is_a($order, 'WC_Order')) {
+                            $sent_to = (string) $order->get_meta('_dfb_pdf_email_to');
+                            if ($sent_to !== '' && is_email($sent_to)) {
+                                $display_email = $sent_to;
+                            } else {
+                                $billing_email = (string) $order->get_billing_email();
+                                if ($billing_email !== '' && is_email($billing_email)) {
+                                    $display_email = $billing_email;
+                                }
+                            }
+                        }
+
                         if (strpos($full_path, $upload_base_dir) === 0) {
                             $relative = ltrim(str_replace($upload_base_dir, '', $full_path), '/');
                             $download_url = trailingslashit($upload_base_url) . str_replace('\\', '/', $relative);
                         }
+
+                        // Always regenerate on download: use an admin-post endpoint instead of a direct file URL.
+                        $regen_url = wp_nonce_url(
+                            admin_url('admin-post.php?action=dfb_download_document&response_id=' . intval($row->id)),
+                            'dfb_download_document_' . intval($row->id)
+                        );
                         ?>
                         <tr>
                             <td><?php echo intval($row->id); ?></td>
                             <td><?php echo esc_html($row->form_name ? $row->form_name : 'N/A'); ?></td>
-                            <td><?php echo esc_html((string) $row->user_email); ?></td>
+                            <td><?php echo esc_html($display_email); ?></td>
                             <td><?php echo intval($row->order_id) > 0 ? '#' . intval($row->order_id) : 'Not linked yet'; ?></td>
                             <td><?php echo esc_html(date('M d, Y H:i', strtotime((string) $row->created_at))); ?></td>
                             <td>
-                                <?php if (!empty($download_url)): ?>
-                                    <a href="<?php echo esc_url($download_url); ?>" target="_blank" rel="noopener noreferrer">Download PDF</a>
-                                <?php else: ?>
-                                    <span>Pending generation</span>
-                                <?php endif; ?>
+                                <a href="<?php echo esc_url($regen_url); ?>">Download PDF</a>
                             </td>
                             <td><?php echo esc_html($order_status_text); ?></td>
                             <td>
@@ -229,6 +245,58 @@ function dfb_documents_page() {
         </table>
     </div>
     <?php
+}
+
+add_action('admin_post_dfb_download_document', 'dfb_handle_admin_download_document');
+function dfb_handle_admin_download_document() {
+    if (!current_user_can('manage_options')) {
+        wp_die(esc_html__('Unauthorized access.', 'dynamic-form-builder'), '', ['response' => 403]);
+    }
+
+    $response_id = isset($_GET['response_id']) ? intval($_GET['response_id']) : 0;
+    if (
+        $response_id <= 0
+        || !isset($_GET['_wpnonce'])
+        || !wp_verify_nonce(sanitize_text_field(wp_unslash($_GET['_wpnonce'])), 'dfb_download_document_' . $response_id)
+    ) {
+        wp_die(esc_html__('Invalid request.', 'dynamic-form-builder'), '', ['response' => 400]);
+    }
+
+    if (!function_exists('dfb_generate_pdf_for_response')) {
+        wp_die(esc_html__('PDF generator is not available.', 'dynamic-form-builder'), '', ['response' => 500]);
+    }
+
+    // Always generate a fresh PDF for the response.
+    $path = dfb_generate_pdf_for_response($response_id);
+    if ($path === '' || !file_exists($path) || !is_readable($path)) {
+        $detail = isset($GLOBALS['dfb_last_pdf_error']) ? (string) $GLOBALS['dfb_last_pdf_error'] : '';
+        $msg = $detail !== '' ? ('PDF generation failed: ' . $detail) : 'PDF generation failed.';
+        wp_die(esc_html($msg), '', ['response' => 500]);
+    }
+
+    $filename = basename((string) $path);
+    if ($filename === '') {
+        $filename = 'document.pdf';
+    }
+
+    nocache_headers();
+    header('Content-Type: application/pdf');
+    header('Content-Disposition: attachment; filename="' . $filename . '"');
+    header('Content-Length: ' . (string) filesize($path));
+
+    // Flush the file content.
+    $fh = fopen($path, 'rb');
+    if ($fh === false) {
+        wp_die(esc_html__('Could not open PDF file.', 'dynamic-form-builder'), '', ['response' => 500]);
+    }
+    while (!feof($fh)) {
+        echo fread($fh, 8192);
+        if (function_exists('flush')) {
+            flush();
+        }
+    }
+    fclose($fh);
+    exit;
 }
 
 add_action('admin_post_dfb_delete_document', 'dfb_handle_admin_delete_document');

@@ -45,37 +45,100 @@ function dfb_template_answer_truthy($value_text) {
 }
 
 /**
- * Process {{#if key}} ... {{else}} ... {{/if}} and {{#if key}} ... {{/if}} blocks (non-nested).
+ * Process {{#if key}} ... {{else}} ... {{/if}} and {{#if key}} ... {{/if}} blocks.
+ *
+ * Supports nesting.
  *
  * @param string              $html
  * @param array<string,mixed> $answers
  * @return string
  */
 function dfb_template_process_conditionals($html, $answers) {
-    $max = 100;
-    while ($max-- > 0) {
-        if (preg_match(
-            '/\{\{\s*#if\s+([a-zA-Z0-9_]+)\s*\}\}(.*?)\{\{\s*else\s*\}\}(.*?)\{\{\s*\/if\s*\}\}/s',
-            $html,
-            $m
-        )) {
-            $val   = dfb_template_resolve_answer_key($m[1], $answers);
-            $branch = dfb_template_answer_truthy($val) ? $m[2] : $m[3];
-            $html   = str_replace($m[0], $branch, $html);
-            continue;
+    $html = (string) $html;
+
+    // Tokenize the template and resolve innermost blocks first.
+    // Tag forms:
+    // - {{#if key}}
+    // - {{else}}
+    // - {{/if}}
+    $tag_re = '/\{\{\s*(#if\s+([a-zA-Z0-9_]+)|else|\/if)\s*\}\}/';
+
+    $max_passes = 200; // Hard cap to avoid infinite loops on malformed templates.
+    while ($max_passes-- > 0) {
+        if (!preg_match($tag_re, $html)) {
+            break;
         }
-        if (preg_match(
-            '/\{\{\s*#if\s+([a-zA-Z0-9_]+)\s*\}\}(.*?)\{\{\s*\/if\s*\}\}/s',
-            $html,
-            $m
-        )) {
-            $val    = dfb_template_resolve_answer_key($m[1], $answers);
-            $branch = dfb_template_answer_truthy($val) ? $m[2] : '';
-            $html   = str_replace($m[0], $branch, $html);
-            continue;
+
+        $stack = [];
+        $pos   = 0;
+        $did_replace = false;
+
+        while (preg_match($tag_re, $html, $m, PREG_OFFSET_CAPTURE, $pos)) {
+            $full_tag  = $m[0][0];
+            $full_pos  = (int) $m[0][1];
+            $full_len  = strlen($full_tag);
+            $cmd       = trim((string) $m[1][0]);
+            $key       = isset($m[2]) ? (string) $m[2][0] : '';
+
+            if (str_starts_with($cmd, '#if')) {
+                $stack[] = [
+                    'key' => $key,
+                    'start' => $full_pos,
+                    'open_len' => $full_len,
+                    'else' => null,
+                    'else_len' => null,
+                ];
+            } elseif ($cmd === 'else') {
+                $top = count($stack) - 1;
+                if ($top >= 0 && $stack[$top]['else'] === null) {
+                    $stack[$top]['else'] = $full_pos;
+                    $stack[$top]['else_len'] = $full_len;
+                }
+            } elseif ($cmd === '/if') {
+                $top = count($stack) - 1;
+                if ($top >= 0) {
+                    $frame = $stack[$top];
+                    array_pop($stack);
+
+                    $block_start = (int) $frame['start'];
+                    $block_end   = $full_pos + $full_len;
+
+                    $open_end = $block_start + (int) $frame['open_len'];
+
+                    $else_pos = $frame['else'];
+                    $else_len = $frame['else_len'];
+
+                    $true_part = '';
+                    $false_part = '';
+
+                    if ($else_pos !== null) {
+                        $else_pos = (int) $else_pos;
+                        $else_len = (int) $else_len;
+                        $true_part  = substr($html, $open_end, $else_pos - $open_end);
+                        $false_part = substr($html, $else_pos + $else_len, $full_pos - ($else_pos + $else_len));
+                    } else {
+                        $true_part = substr($html, $open_end, $full_pos - $open_end);
+                        $false_part = '';
+                    }
+
+                    $val = dfb_template_resolve_answer_key((string) $frame['key'], $answers);
+                    $replacement = dfb_template_answer_truthy($val) ? $true_part : $false_part;
+
+                    $html = substr($html, 0, $block_start) . $replacement . substr($html, $block_end);
+                    $did_replace = true;
+                    break; // Restart scan from beginning after a replacement.
+                }
+            }
+
+            $pos = $full_pos + $full_len;
         }
-        break;
+
+        if (!$did_replace) {
+            // Unbalanced tags (e.g. stray {{else}} or missing {{/if}}) — stop to avoid looping.
+            break;
+        }
     }
+
     return $html;
 }
 
@@ -248,6 +311,7 @@ function dfb_render_document_template($template_content, $response_row) {
     $template_content = preg_replace('/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/', '{{\1}}', $template_content);
     // If placeholders are pasted back-to-back (}} {{ with no space), replaced values run together in the PDF.
     $template_content = preg_replace('/\}\}\s*\{\{/', '}} {{', $template_content);
+    $template_had_html = preg_match('/<\s*\/?\s*[a-zA-Z][^>]*>/', (string) $template_content) === 1;
 
     $answers = json_decode((string) ($response_row->answers ?? ''), true);
     if (!is_array($answers)) {
@@ -279,6 +343,17 @@ function dfb_render_document_template($template_content, $response_row) {
     $template_content = dfb_template_process_conditionals((string) $template_content, $answers);
 
     $rendered = strtr((string) $template_content, $replacements);
+    if (!$template_had_html) {
+        // If the template was entered as plain text, preserve newlines and blank lines in HTML/PDF output.
+        // HTML collapses raw \n into spaces unless we opt into preformatted whitespace.
+        $rendered = '<div class="dfb-template-pre" style="white-space: pre-wrap;">' . esc_html($rendered) . '</div>';
+    } else {
+        // wp_editor often stores "plain text" templates wrapped in minimal HTML, which flips $template_had_html
+        // and would otherwise collapse newlines in the final PDF. Preserve newlines while still allowing HTML.
+        if (preg_match("/\r\n|\r|\n/", $rendered)) {
+            $rendered = '<div class="dfb-template-pre dfb-template-pre--html" style="white-space: pre-wrap;">' . $rendered . '</div>';
+        }
+    }
 
     // Remove known boilerplate text that should not appear in final PDFs.
     // Templates created in the admin editor sometimes store extra placeholder/demo text.
@@ -313,20 +388,39 @@ function dfb_render_document_template($template_content, $response_row) {
     $footer_text_opt = dfb_sanitize_option_text_for_pdf((string) get_option('dfb_footer_text', ''));
 
     // Signature block settings.
+    $signature_count = intval(get_option('dfb_signature_count', 2));
+    if ($signature_count < 1) $signature_count = 1;
+    if ($signature_count > 6) $signature_count = 6;
     $signature_title       = dfb_sanitize_option_text_for_pdf((string) get_option('dfb_signature_title', ''));
     $signature_description = dfb_sanitize_option_text_for_pdf((string) get_option('dfb_signature_description', ''));
-    $signature_1_label     = dfb_sanitize_option_text_for_pdf((string) get_option('dfb_signature_1_label', ''));
-    $signature_1_text      = dfb_sanitize_option_text_for_pdf((string) get_option('dfb_signature_1_text', ''));
-    $signature_2_label     = dfb_sanitize_option_text_for_pdf((string) get_option('dfb_signature_2_label', ''));
-    $signature_2_text      = dfb_sanitize_option_text_for_pdf((string) get_option('dfb_signature_2_text', ''));
+    $signature_labels = [];
+    $signature_texts  = [];
+    $has_any_signature_field = false;
+    for ($i = 1; $i <= $signature_count; $i++) {
+        $lbl = dfb_sanitize_option_text_for_pdf((string) get_option('dfb_signature_' . $i . '_label', ''));
+        $txt = dfb_sanitize_option_text_for_pdf((string) get_option('dfb_signature_' . $i . '_text', ''));
+        $signature_labels[$i] = $lbl;
+        $signature_texts[$i]  = $txt;
+        if ($lbl !== '' || $txt !== '') {
+            $has_any_signature_field = true;
+        }
+    }
 
-    $site_name = get_bloginfo('name');
-    if (!is_string($site_name)) {
-        $site_name = '';
+    $header_title = '';
+    $form_id_for_header = isset($response_row->form_id) ? intval($response_row->form_id) : 0;
+    if ($form_id_for_header > 0) {
+        global $wpdb;
+        $form_name_row = $wpdb->get_var($wpdb->prepare(
+            "SELECT form_name FROM {$wpdb->prefix}dfb_forms WHERE id = %d",
+            $form_id_for_header
+        ));
+        if (is_string($form_name_row) && $form_name_row !== '') {
+            $header_title = $form_name_row;
+        }
     }
 
     $header_html = '';
-    if ($header_logo_url || $header_text_opt || $site_name) {
+    if ($header_logo_url || $header_text_opt || $header_title !== '') {
         $header_html = '
 <style>
     body { font-family: Arial, sans-serif; color: #333; margin: 40px; }
@@ -381,9 +475,9 @@ function dfb_render_document_template($template_content, $response_row) {
         $header_html .= '
 <div class="dfb-header-main">';
 
-        if ($site_name) {
+        if ($header_title !== '') {
             $header_html .= '
-    <h1 class="dfb-header-title">' . esc_html($site_name) . '</h1>';
+    <h1 class="dfb-header-title">' . esc_html($header_title) . '</h1>';
         }
 
         if ($header_text_opt) {
@@ -402,9 +496,17 @@ function dfb_render_document_template($template_content, $response_row) {
 <div class="dfb-footer">' . wp_kses_post(nl2br($footer_text_opt)) . '</div>';
     }
 
-    // Structured Question/Answer section (only when no document template body). Settings → General can hide only labels; answers still print.
+    // Structured Question/Answer section (only when no document template body).
     $has_custom_template = trim(strip_tags($template_content)) !== '';
     if (!empty($answers) && !$has_custom_template) {
+        $hide_all_opt = get_option('dfb_hide_questions_and_answers_in_pdf', '0');
+        $hide_all_qa = $hide_all_opt === 1 || $hide_all_opt === '1' || $hide_all_opt === true;
+        if ($hide_all_qa) {
+            // Skip appending the automatic Q/A list entirely.
+            // Placeholders in the document template are unaffected (this block only runs when there is no template body).
+            goto dfb_after_auto_qa;
+        }
+
         $hide_opt = get_option('dfb_hide_questions_in_pdf', '0');
         $hide_question_labels = $hide_opt === 1 || $hide_opt === '1' || $hide_opt === true;
 
@@ -421,7 +523,10 @@ function dfb_render_document_template($template_content, $response_row) {
             if (is_array($questions)) {
                 foreach ($questions as $question) {
                     $index = intval($question->question_order) + 1;
-                    $question_labels['question_' . $index] = (string) $question->question_title;
+                    $raw = (string) $question->question_title;
+                    $key = 'form_' . intval($response_row->form_id) . '_q_order_' . $index . '_title';
+                    dfb_register_i18n_string($raw, $key);
+                    $question_labels['question_' . $index] = dfb_translate_i18n_string($raw, $key);
                 }
             }
         }
@@ -446,6 +551,7 @@ function dfb_render_document_template($template_content, $response_row) {
 
         $rendered .= '</div>';
     }
+    dfb_after_auto_qa:
 
     // Append custom sections defined in settings.
     $sections_value = get_option('dfb_sections', '[]');
@@ -477,14 +583,7 @@ function dfb_render_document_template($template_content, $response_row) {
     }
 
     // Append signature section above footer, if configured.
-    if (
-        $signature_title !== '' ||
-        $signature_description !== '' ||
-        $signature_1_label !== '' ||
-        $signature_1_text !== '' ||
-        $signature_2_label !== '' ||
-        $signature_2_text !== ''
-    ) {
+    if ($signature_title !== '' || $signature_description !== '' || $has_any_signature_field) {
         $rendered .= '<div class="dfb-signature-section">';
 
         if ($signature_title !== '') {
@@ -495,32 +594,55 @@ function dfb_render_document_template($template_content, $response_row) {
             $rendered .= '<div class="dfb-signature-description">' . wp_kses_post(nl2br($signature_description)) . '</div>';
         }
 
-        // Use a simple table so both signatures sit on one row reliably in PDFs.
-        $rendered .= '<table class="dfb-signature-table"><tr>';
+        // Use a simple table so signature cells align reliably in PDFs. Layout is 2 per row.
+        $rendered .= '<table class="dfb-signature-table">';
 
-        // Signature 1 (left cell).
-        $rendered .= '<td>';
-        $rendered .= '<div class="dfb-signature-line"></div>';
-        if ($signature_1_label !== '') {
-            $rendered .= '<span class="dfb-signature-label">' . esc_html($signature_1_label) . '</span>';
-        }
-        if ($signature_1_text !== '') {
-            $rendered .= '<div class="dfb-signature-text">' . wp_kses_post($signature_1_text) . '</div>';
-        }
-        $rendered .= '</td>';
+        if ($signature_count === 1) {
+            $rendered .= '<tr><td colspan="2" style="width:100%;text-align:center;">';
+            $rendered .= '<div class="dfb-signature-line"></div>';
+            if (($signature_labels[1] ?? '') !== '') {
+                $rendered .= '<span class="dfb-signature-label">' . esc_html($signature_labels[1]) . '</span>';
+            }
+            if (($signature_texts[1] ?? '') !== '') {
+                $rendered .= '<div class="dfb-signature-text">' . wp_kses_post($signature_texts[1]) . '</div>';
+            }
+            $rendered .= '</td></tr>';
+        } else {
+            for ($i = 1; $i <= $signature_count; $i += 2) {
+                $rendered .= '<tr>';
 
-        // Signature 2 (right cell).
-        $rendered .= '<td>';
-        $rendered .= '<div class="dfb-signature-line"></div>';
-        if ($signature_2_label !== '') {
-            $rendered .= '<span class="dfb-signature-label">' . esc_html($signature_2_label) . '</span>';
-        }
-        if ($signature_2_text !== '') {
-            $rendered .= '<div class="dfb-signature-text">' . wp_kses_post($signature_2_text) . '</div>';
-        }
-        $rendered .= '</td>';
+                // Left cell.
+                $rendered .= '<td>';
+                $rendered .= '<div class="dfb-signature-line"></div>';
+                if (($signature_labels[$i] ?? '') !== '') {
+                    $rendered .= '<span class="dfb-signature-label">' . esc_html($signature_labels[$i]) . '</span>';
+                }
+                if (($signature_texts[$i] ?? '') !== '') {
+                    $rendered .= '<div class="dfb-signature-text">' . wp_kses_post($signature_texts[$i]) . '</div>';
+                }
+                $rendered .= '</td>';
 
-        $rendered .= '</tr></table>';
+                // Right cell (may be empty for odd counts).
+                $j = $i + 1;
+                if ($j <= $signature_count) {
+                    $rendered .= '<td>';
+                    $rendered .= '<div class="dfb-signature-line"></div>';
+                    if (($signature_labels[$j] ?? '') !== '') {
+                        $rendered .= '<span class="dfb-signature-label">' . esc_html($signature_labels[$j]) . '</span>';
+                    }
+                    if (($signature_texts[$j] ?? '') !== '') {
+                        $rendered .= '<div class="dfb-signature-text">' . wp_kses_post($signature_texts[$j]) . '</div>';
+                    }
+                    $rendered .= '</td>';
+                } else {
+                    $rendered .= '<td></td>';
+                }
+
+                $rendered .= '</tr>';
+            }
+        }
+
+        $rendered .= '</table>';
         $rendered .= '</div>'; // .dfb-signature-section
     }
 

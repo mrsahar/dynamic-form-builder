@@ -81,8 +81,9 @@ function dfb_clear_form_required_notices() {
 
     $filtered_errors = [];
     foreach ($notices['error'] as $notice) {
-        $message = isset($notice['notice']) ? wp_strip_all_tags((string) $notice['notice']) : '';
-        $is_dfb_form_notice = (stripos($message, 'fill out the required form') !== false);
+        $raw     = isset($notice['notice']) ? (string) $notice['notice'] : '';
+        $message = wp_strip_all_tags($raw);
+        $is_dfb_form_notice = (stripos($raw, 'dfb-checkout-guard') !== false);
         if (!$is_dfb_form_notice) {
             $filtered_errors[] = $notice;
         }
@@ -258,6 +259,28 @@ function dfb_link_response_to_order($order_or_id) {
         ['order_id' => $order->get_id()],
         ['id' => $response_id]
     );
+
+    // Store the actual recipient email (the address we send the PDF to) in the response row
+    // so the Generated Documents list matches delivery.
+    $billing_email = '';
+    if (method_exists($order, 'get_billing_email')) {
+        $billing_email = (string) $order->get_billing_email();
+    }
+    $billing_email = sanitize_email($billing_email);
+    if ($billing_email !== '' && is_email($billing_email)) {
+        // Match DB schema length to avoid strict SQL truncation errors.
+        if (function_exists('mb_substr')) {
+            $billing_email = mb_substr($billing_email, 0, 100);
+        } else {
+            $billing_email = substr($billing_email, 0, 100);
+        }
+
+        $wpdb->update(
+            $wpdb->prefix . 'dfb_responses',
+            ['user_email' => $billing_email],
+            ['id' => $response_id]
+        );
+    }
 }
 
 // Fallback hooks: some checkout flows skip/alter checkout_create_order timing.
@@ -291,7 +314,11 @@ function dfb_require_form_before_checkout() {
     if ($form_url !== '') {
         wc_add_notice(
             sprintf(
-                'Please <a href="%s">fill out the required form</a> before proceeding to checkout.',
+                /* translators: %s: URL to the form page */
+                __(
+                    'Please <a class="dfb-checkout-guard" href="%s">fill out the required form</a> before proceeding to checkout.',
+                    'dynamic-form-builder'
+                ),
                 esc_url($form_url)
             ),
             'error'

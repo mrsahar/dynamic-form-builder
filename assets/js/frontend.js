@@ -1,7 +1,19 @@
 jQuery(document).ready(function($) {
+    function dfbL10n() {
+        return (typeof window.dfbFrontendL10n === 'object' && window.dfbFrontendL10n) ? window.dfbFrontendL10n : {};
+    }
+
+    function dfbFormatStepProgress(stepNum, total) {
+        var fmt = inlineStepFmt || dfbL10n().stepProgress || 'Step %1$d of %2$d';
+        return String(fmt).replace('%1$d', String(stepNum)).replace('%2$d', String(total));
+    }
+
     var $form = $('.dfb-step-form');
     var $steps = $('.dfb-step', $form);
     if (!$steps.length) return;
+
+    var $wrap = $form.closest('.dfb-frontend-wrap');
+    var inlineStepFmt = ($wrap.length && $wrap.attr('data-dfb-step-progress')) ? String($wrap.attr('data-dfb-step-progress')) : '';
 
     var $nextBtn = $('#dfb-next-btn');
     var $prevBtn = $('#dfb-prev-btn');
@@ -146,7 +158,7 @@ jQuery(document).ready(function($) {
 
         var percent = total ? Math.round((stepNum / total) * 100) : 0;
         $progressBar.css('width', percent + '%');
-        $progressText.text('Step ' + stepNum + ' of ' + total);
+        $progressText.text(dfbFormatStepProgress(stepNum, total));
 
         if (idx === 0) $prevBtn.hide();
         else $prevBtn.show();
@@ -174,7 +186,7 @@ jQuery(document).ready(function($) {
 
             if (!value) {
                 valid = false;
-                showFieldError($field, 'This field is required.');
+                showFieldError($field, dfbL10n().fieldRequired || 'This field is required.');
                 return false;
             }
 
@@ -182,7 +194,7 @@ jQuery(document).ready(function($) {
                 var emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
                 if (!emailPattern.test(value)) {
                     valid = false;
-                    showFieldError($field, 'Please enter a valid email address.');
+                    showFieldError($field, dfbL10n().emailInvalid || 'Please enter a valid email address.');
                     return false;
                 }
             }
@@ -201,7 +213,7 @@ jQuery(document).ready(function($) {
             var $checked = $current.find('input[type="radio"][name="' + rn + '"]:checked');
             if (!$checked.length) {
                 valid = false;
-                showFieldError($current.find('input[type="radio"][name="' + rn + '"]').first(), 'Please choose an option.');
+                showFieldError($current.find('input[type="radio"][name="' + rn + '"]').first(), dfbL10n().chooseOption || 'Please choose an option.');
                 break;
             }
         }
@@ -218,7 +230,7 @@ jQuery(document).ready(function($) {
             var $checked2 = $current.find('input[type="checkbox"][name="' + cn + '"]:checked');
             if (!$checked2.length) {
                 valid = false;
-                showFieldError($current.find('input[type="checkbox"][name="' + cn + '"]').first(), 'Please select at least one option.');
+                showFieldError($current.find('input[type="checkbox"][name="' + cn + '"]').first(), dfbL10n().selectAtLeastOne || 'Please select at least one option.');
                 break;
             }
         }

@@ -37,6 +37,10 @@ function dfb_settings_page() {
             'dfb_hide_questions_in_pdf',
             isset($_POST['dfb_hide_questions_in_pdf']) && (string) wp_unslash($_POST['dfb_hide_questions_in_pdf']) === '1' ? 1 : 0
         );
+        update_option(
+            'dfb_hide_questions_and_answers_in_pdf',
+            isset($_POST['dfb_hide_questions_and_answers_in_pdf']) && (string) wp_unslash($_POST['dfb_hide_questions_and_answers_in_pdf']) === '1' ? 1 : 0
+        );
 
         // Sections JSON (stored as JSON string).
         if (array_key_exists('dfb_sections_data', $_POST)) {
@@ -64,12 +68,18 @@ function dfb_settings_page() {
         $dfb_update_option_if_posted('dfb_email_body', 'dfb_email_body', static fn($v) => wp_kses_post((string) $v));
 
         // Signature settings.
+        $dfb_update_option_if_posted('dfb_signature_count', 'dfb_signature_count', static function ($v) {
+            $n = intval($v);
+            if ($n < 1) $n = 1;
+            if ($n > 6) $n = 6;
+            return $n;
+        });
         $dfb_update_option_if_posted('dfb_signature_title', 'dfb_signature_title', static fn($v) => sanitize_text_field((string) $v));
         $dfb_update_option_if_posted('dfb_signature_description', 'dfb_signature_description', static fn($v) => wp_kses_post((string) $v));
-        $dfb_update_option_if_posted('dfb_signature_1_label', 'dfb_signature_1_label', static fn($v) => sanitize_text_field((string) $v));
-        $dfb_update_option_if_posted('dfb_signature_1_text', 'dfb_signature_1_text', static fn($v) => wp_kses_post((string) $v));
-        $dfb_update_option_if_posted('dfb_signature_2_label', 'dfb_signature_2_label', static fn($v) => sanitize_text_field((string) $v));
-        $dfb_update_option_if_posted('dfb_signature_2_text', 'dfb_signature_2_text', static fn($v) => wp_kses_post((string) $v));
+        for ($i = 1; $i <= 6; $i++) {
+            $dfb_update_option_if_posted('dfb_signature_' . $i . '_label', 'dfb_signature_' . $i . '_label', static fn($v) => sanitize_text_field((string) $v));
+            $dfb_update_option_if_posted('dfb_signature_' . $i . '_text', 'dfb_signature_' . $i . '_text', static fn($v) => wp_kses_post((string) $v));
+        }
 
         echo '<div class="updated notice is-dismissible"><p>' . esc_html__('Settings saved.', 'dynamic-form-builder') . '</p></div>';
     }
@@ -85,14 +95,20 @@ function dfb_settings_page() {
     }
 
     $hide_questions_in_pdf = (int) get_option('dfb_hide_questions_in_pdf', 0) === 1;
+    $hide_questions_and_answers_in_pdf = (int) get_option('dfb_hide_questions_and_answers_in_pdf', 0) === 1;
 
     // Load signature settings.
+    $signature_count       = intval(get_option('dfb_signature_count', 2));
+    if ($signature_count < 1) $signature_count = 1;
+    if ($signature_count > 6) $signature_count = 6;
     $signature_title       = (string) get_option('dfb_signature_title', '');
     $signature_description = (string) get_option('dfb_signature_description', '');
-    $signature_1_label     = (string) get_option('dfb_signature_1_label', '');
-    $signature_1_text      = (string) get_option('dfb_signature_1_text', '');
-    $signature_2_label     = (string) get_option('dfb_signature_2_label', '');
-    $signature_2_text      = (string) get_option('dfb_signature_2_text', '');
+    $signature_labels = [];
+    $signature_texts  = [];
+    for ($i = 1; $i <= 6; $i++) {
+        $signature_labels[$i] = (string) get_option('dfb_signature_' . $i . '_label', '');
+        $signature_texts[$i]  = (string) get_option('dfb_signature_' . $i . '_text', '');
+    }
 
     // Load email settings (with sensible defaults).
     $email_subject = (string) get_option(
@@ -184,6 +200,13 @@ function dfb_settings_page() {
                                 <p class="description">
                                     <?php esc_html_e('When checked, question titles are hidden in the automatic answers list; answer values still appear. Your document template can still use placeholders such as {{question_1}}.', 'dynamic-form-builder'); ?>
                                 </p>
+                                <label for="dfb_hide_questions_and_answers_in_pdf" style="display:block;margin-top:10px;">
+                                    <input type="checkbox" name="dfb_hide_questions_and_answers_in_pdf" id="dfb_hide_questions_and_answers_in_pdf" value="1" <?php checked($hide_questions_and_answers_in_pdf); ?>>
+                                    <?php esc_html_e('Hide questions and answers in PDF (hide the automatic answers list)', 'dynamic-form-builder'); ?>
+                                </label>
+                                <p class="description">
+                                    <?php esc_html_e('When checked, the automatic questions/answers list is not included in the PDF at all. Document templates can still use placeholders such as {{question_1}}.', 'dynamic-form-builder'); ?>
+                                </p>
                             </td>
                         </tr>
                     </tbody>
@@ -226,43 +249,51 @@ function dfb_settings_page() {
 
                         <tr>
                             <th scope="row">
-                                <label><?php esc_html_e('Signature 1', 'dynamic-form-builder'); ?></label>
+                                <label for="dfb_signature_count"><?php esc_html_e('Number of signatures', 'dynamic-form-builder'); ?></label>
                             </th>
                             <td>
-                                <p>
-                                    <label for="dfb_signature_1_label">
-                                        <?php esc_html_e('Label (e.g. Applicant Signature)', 'dynamic-form-builder'); ?><br>
-                                        <input type="text" name="dfb_signature_1_label" id="dfb_signature_1_label" class="regular-text" value="<?php echo esc_attr($signature_1_label); ?>">
-                                    </label>
-                                </p>
-                                <p>
-                                    <label for="dfb_signature_1_text">
-                                        <?php esc_html_e('Text below signature line', 'dynamic-form-builder'); ?><br>
-                                        <input type="text" name="dfb_signature_1_text" id="dfb_signature_1_text" class="regular-text" value="<?php echo esc_attr($signature_1_text); ?>">
-                                    </label>
+                                <select name="dfb_signature_count" id="dfb_signature_count">
+                                    <?php for ($i = 1; $i <= 6; $i++): ?>
+                                        <option value="<?php echo esc_attr($i); ?>" <?php selected($signature_count, $i); ?>>
+                                            <?php echo esc_html($i); ?>
+                                        </option>
+                                    <?php endfor; ?>
+                                </select>
+                                <p class="description">
+                                    <?php esc_html_e('Select how many signature columns should appear in the PDF. Signatures are laid out 2 per row (e.g. 6 signatures become 3 rows).', 'dynamic-form-builder'); ?>
                                 </p>
                             </td>
                         </tr>
 
-                        <tr>
+                        <?php for ($sig = 1; $sig <= 6; $sig++): ?>
+                        <tr class="dfb-signature-row" data-sig-index="<?php echo esc_attr($sig); ?>">
                             <th scope="row">
-                                <label><?php esc_html_e('Signature 2', 'dynamic-form-builder'); ?></label>
+                                <label><?php echo esc_html(sprintf(__('Signature %d', 'dynamic-form-builder'), $sig)); ?></label>
                             </th>
                             <td>
                                 <p>
-                                    <label for="dfb_signature_2_label">
-                                        <?php esc_html_e('Label (e.g. Company Representative)', 'dynamic-form-builder'); ?><br>
-                                        <input type="text" name="dfb_signature_2_label" id="dfb_signature_2_label" class="regular-text" value="<?php echo esc_attr($signature_2_label); ?>">
+                                    <label for="dfb_signature_<?php echo esc_attr($sig); ?>_label">
+                                        <?php esc_html_e('Label (e.g. Applicant Signature)', 'dynamic-form-builder'); ?><br>
+                                        <input type="text"
+                                               name="dfb_signature_<?php echo esc_attr($sig); ?>_label"
+                                               id="dfb_signature_<?php echo esc_attr($sig); ?>_label"
+                                               class="regular-text"
+                                               value="<?php echo esc_attr((string) ($signature_labels[$sig] ?? '')); ?>">
                                     </label>
                                 </p>
                                 <p>
-                                    <label for="dfb_signature_2_text">
+                                    <label for="dfb_signature_<?php echo esc_attr($sig); ?>_text">
                                         <?php esc_html_e('Text below signature line', 'dynamic-form-builder'); ?><br>
-                                        <input type="text" name="dfb_signature_2_text" id="dfb_signature_2_text" class="regular-text" value="<?php echo esc_attr($signature_2_text); ?>">
+                                        <input type="text"
+                                               name="dfb_signature_<?php echo esc_attr($sig); ?>_text"
+                                               id="dfb_signature_<?php echo esc_attr($sig); ?>_text"
+                                               class="regular-text"
+                                               value="<?php echo esc_attr((string) ($signature_texts[$sig] ?? '')); ?>">
                                     </label>
                                 </p>
                             </td>
                         </tr>
+                        <?php endfor; ?>
                     </tbody>
                 </table>
             </div>
@@ -438,6 +469,21 @@ function dfb_settings_page() {
         });
 
         renderSections();
+
+        // Signature count: show only the selected number of signature fields (1..6).
+        function applySignatureCount() {
+            const count = parseInt($('#dfb_signature_count').val() || '2', 10);
+            $('.dfb-signature-row').each(function() {
+                const idx = parseInt($(this).data('sig-index'), 10);
+                if (!idx || idx <= count) {
+                    $(this).show();
+                } else {
+                    $(this).hide();
+                }
+            });
+        }
+        $(document).on('change', '#dfb_signature_count', applySignatureCount);
+        applySignatureCount();
     });
     </script>
     <?php
