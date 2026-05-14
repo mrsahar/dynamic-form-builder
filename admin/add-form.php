@@ -133,6 +133,9 @@ function dfb_add_form_page() {
                         <code>{{question_2}}</code> - Answer to Question 2<br>
                         <code>{{current_date}}</code> - Current date<br>
                         And so on for each question...<br><br>
+                        <strong>Spacing shortcuts:</strong><br>
+                        <code>{{break}}</code> (or <code>{{beark}}</code>) - force a new line<br>
+                        <code>{{space}}</code> - insert one visible space (non-breaking)<br><br>
                         <strong>Conditional blocks (PDF / document template):</strong><br>
                         <code>{{#if question_1}}...{{else}}...{{/if}}</code> — show the first part when Question 1 is “yes-like” (non-empty and not No/False/0), otherwise the part after <code>{{else}}</code>. You can use <code>question_1</code>, <code>1</code>, or <code>q1</code> as the key. Omit <code>{{else}}...{{/if}}</code> for a simple on/off block.
                     </p>
@@ -146,12 +149,24 @@ function dfb_add_form_page() {
                         'media_buttons' => false
                     ]);
                     ?>
+
+                    <div style="margin-top: 10px; display:flex; gap:10px; align-items:center;">
+                        <button type="button" class="button" id="dfb-preview-pdf">
+                            Preview PDF
+                        </button>
+                        <span class="description" style="margin:0;">
+                            Preview uses sample answers (Answer 1, Answer 2, …) and your current editor content.
+                        </span>
+                    </div>
                     
                     <p class="description" style="margin-top: 10px;">
                         <?php esc_html_e('Example: "This agreement is made on {{current_date}} between {{question_1}} and {{question_2}}..."', 'dynamic-form-builder'); ?>
                     </p>
                     <p class="description" style="color:#646970;">
                         <?php esc_html_e('Tip: Type your document here using placeholders only. Do not copy the gray help text above into the editor — that text would appear in the PDF.', 'dynamic-form-builder'); ?>
+                    </p>
+                    <p class="description" style="color:#646970;">
+                        <?php esc_html_e('Tip: Use {{break}} for a forced line break and {{space}} for a fixed space in the generated PDF.', 'dynamic-form-builder'); ?>
                     </p>
                 </div>
             </div>

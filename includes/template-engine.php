@@ -124,7 +124,99 @@ function dfb_template_process_conditionals($html, $answers) {
                     $val = dfb_template_resolve_answer_key((string) $frame['key'], $answers);
                     $replacement = dfb_template_answer_truthy($val) ? $true_part : $false_part;
 
-                    $html = substr($html, 0, $block_start) . $replacement . substr($html, $block_end);
+                    // If a conditional resolves to nothing, also remove the "ghost line" it
+                    // can leave behind when the tags were on their own line. This prevents
+                    // `{{else}}` (or `{{#if}}`/`{{/if}}`) from creating blank spacing when
+                    // the chosen branch is empty.
+                    $remove_start = $block_start;
+                    $remove_end   = $block_end;
+
+                    if (trim((string) $replacement) === '') {
+                        // Determine current line bounds around the block.
+                        $before = substr($html, 0, $block_start);
+                        $last_nl = strrpos($before, "\n");
+                        $last_cr = strrpos($before, "\r");
+                        $line_start = max($last_nl === false ? -1 : $last_nl, $last_cr === false ? -1 : $last_cr) + 1;
+
+                        $after_newline_match = null;
+                        if (preg_match('/\r\n|\r|\n/', $html, $after_newline_match, PREG_OFFSET_CAPTURE, $block_end)) {
+                            $nl_pos = (int) $after_newline_match[0][1];
+                            $nl_len = strlen((string) $after_newline_match[0][0]);
+                            $line_end_inclusive = $nl_pos + $nl_len;
+
+                            $left_ws  = substr($html, $line_start, $block_start - $line_start);
+                            $right_ws = substr($html, $block_end, $nl_pos - $block_end);
+
+                            if (trim((string) $left_ws) === '' && trim((string) $right_ws) === '') {
+                                $remove_start = $line_start;
+                                $remove_end   = $line_end_inclusive;
+                            }
+                        } else {
+                            // End-of-string: still remove trailing whitespace if this was the last line.
+                            $left_ws = substr($html, $line_start, $block_start - $line_start);
+                            $right_ws = substr($html, $block_end);
+                            if (trim((string) $left_ws) === '' && trim((string) $right_ws) === '') {
+                                $remove_start = $line_start;
+                                $remove_end   = strlen($html);
+                            }
+                        }
+
+                        // Inline spacing cleanup: when the empty conditional sits inside text,
+                        // remove dangling spaces so we don't end up with "word ." or double spaces.
+                        $html_len = strlen($html);
+                        if ($remove_start === $block_start && $remove_end === $block_end) {
+                            $prev_char = ($remove_start > 0) ? substr($html, $remove_start - 1, 1) : '';
+                            $next_char = ($remove_end < $html_len) ? substr($html, $remove_end, 1) : '';
+
+                            // If we're right before punctuation, eat spaces/tabs on the left.
+                            if ($prev_char !== '' && preg_match('/[ \t]/', $prev_char) && $next_char !== '' && preg_match('/[\\.,;:!\\?\\)\\]\\}]/', $next_char)) {
+                                while ($remove_start > 0) {
+                                    $c = substr($html, $remove_start - 1, 1);
+                                    if ($c !== ' ' && $c !== "\t") {
+                                        break;
+                                    }
+                                    $remove_start--;
+                                }
+                            }
+
+                            // If we would create double spaces, eat spaces/tabs on the right.
+                            $prev_char2 = ($remove_start > 0) ? substr($html, $remove_start - 1, 1) : '';
+                            $next_char2 = ($remove_end < $html_len) ? substr($html, $remove_end, 1) : '';
+                            if ($prev_char2 !== '' && preg_match('/[ \t]/', $prev_char2) && $next_char2 !== '' && preg_match('/[ \t]/', $next_char2)) {
+                                while ($remove_end < $html_len) {
+                                    $c = substr($html, $remove_end, 1);
+                                    if ($c !== ' ' && $c !== "\t") {
+                                        break;
+                                    }
+                                    $remove_end++;
+                                }
+                            }
+                        }
+
+                        // Join-point cleanup: if the conditional was surrounded by whitespace and
+                        // the right side begins with whitespace + punctuation, drop the left-side
+                        // whitespace so we don't produce "word  ." or "word .".
+                        $left_join  = substr($html, 0, $remove_start);
+                        $right_join = substr($html, $remove_end);
+                        if (preg_match('/^[ \t]+[\\.,;:!\\?\\)\\]\\}]/', (string) $right_join)) {
+                            // Eat spaces/tabs that sit directly before punctuation.
+                            while ($remove_end < $html_len) {
+                                $c = substr($html, $remove_end, 1);
+                                if ($c !== ' ' && $c !== "\t") {
+                                    break;
+                                }
+                                $remove_end++;
+                            }
+                        }
+                        // If both sides had whitespace, drop the left-side whitespace too to avoid double spaces.
+                        $left_join2  = substr($html, 0, $remove_start);
+                        $right_join2 = substr($html, $remove_end);
+                        if (preg_match('/[ \t]+$/', (string) $left_join2) && preg_match('/^[ \t]+/', (string) $right_join2)) {
+                            $remove_start = strlen(rtrim((string) $left_join2, " \t"));
+                        }
+                    }
+
+                    $html = substr($html, 0, $remove_start) . $replacement . substr($html, $remove_end);
                     $did_replace = true;
                     break; // Restart scan from beginning after a replacement.
                 }
@@ -304,14 +396,143 @@ function dfb_sanitize_option_text_for_pdf($text) {
     return trim($text);
 }
 
+/**
+ * After conditional blocks are resolved, collapse blank lines they leave behind.
+ *
+ * A "blank line" here means a line that contains only whitespace after the
+ * conditional tag(s) on it were replaced with ''. We also handle the special
+ * {{break}} tag so authors can force a line-break only when a block renders.
+ *
+ * @param string $html
+ * @return string
+ */
+function dfb_template_collapse_blank_lines($html) {
+    // 1. Replace {{break}} with a real newline (used inside conditionals to
+    //    produce spacing only when the block is truthy).
+    $html = str_ireplace('{{break}}', "\n", (string) $html);
+
+    // 2. Split on every newline, drop lines that are pure whitespace, rejoin.
+    //    This removes the ghost lines left when an entire {{#if}}...{{/if}} block
+    //    that spanned its own line(s) evaluated to empty.
+    $lines = preg_split('/\r\n|\r|\n/', $html);
+    $kept = [];
+    $prev_blank = false;
+
+    if (is_array($lines)) {
+        foreach ($lines as $line) {
+            $is_blank = (trim((string) $line) === '');
+
+            // Allow at most ONE consecutive blank line (mirrors standard text behaviour).
+            if ($is_blank && $prev_blank) {
+                continue;
+            }
+
+            $kept[] = (string) $line;
+            $prev_blank = $is_blank;
+        }
+    }
+
+    return implode("\n", $kept);
+}
+
+/**
+ * Remove whitespace that ends up directly before punctuation in rendered output.
+ *
+ * wp_editor / HTML often introduces regular spaces or non-breaking spaces (`&nbsp;`)
+ * around template tags. When a conditional resolves or disappears, those can remain
+ * and produce "word ." / "... ." in PDFs.
+ *
+ * @param string $html
+ * @return string
+ */
+function dfb_template_fix_spacing_before_punctuation($html) {
+    $html = (string) $html;
+
+    // Decode common NBSP encodings to a normal space so one regex can handle them.
+    $html = str_ireplace('&nbsp;', ' ', $html);
+    $html = str_replace("\xC2\xA0", ' ', $html);
+
+    // Remove spaces/tabs immediately before punctuation.
+    $html = preg_replace('/[ \t]+([\\.,;:!\\?])/u', '$1', $html);
+
+    return (string) $html;
+}
+
+/**
+ * Custom trim marker: `<dfb-nospace>` / `<dfb-nospace/>` (and `{{nospace}}` alias).
+ *
+ * When present at the start of a line, removes leading spaces/tabs on that line.
+ * Also removes the marker itself (and a single following space if present).
+ *
+ * @param string $html
+ * @return string
+ */
+function dfb_template_apply_nospace_marker($html) {
+    $html = (string) $html;
+
+    // Alias: allow {{nospace}} in addition to an HTML-ish marker.
+    $html = str_ireplace('{{nospace}}', '<dfb-nospace/>', $html);
+
+    // 1) Beginning of string: optional whitespace + marker + optional whitespace.
+    $html = preg_replace('/^[ \t]*<dfb-nospace\\b[^>]*\\/?>(?:[ \t]*)/i', '', $html);
+
+    // 2) Start of a line in plain text.
+    $html = preg_replace('/(^|\\r\\n|\\r|\\n)[ \t]*<dfb-nospace\\b[^>]*\\/?>(?:[ \t]*)/i', '$1', $html);
+
+    // 3) Start of a line in HTML after a block-ish tag close (common from wp_editor).
+    // Example: </p>\n    <dfb-nospace/>TEXT  -> </p>\nTEXT
+    $html = preg_replace('/(<\\/p>|<br\\s*\\/?\\s*>|<\\/div>|<\\/h[1-6]>|<\\/li>)(\\s*)[ \t]*<dfb-nospace\\b[^>]*\\/?>(?:[ \t]*)/i', '$1$2', $html);
+
+    // Remove any remaining markers that weren’t at line-start.
+    $html = preg_replace('/<dfb-nospace\\b[^>]*\\/?>(?:[ \t]*)/i', '', $html);
+
+    return (string) $html;
+}
+
+/**
+ * Insert a space before `{{#if ...}}` when it is glued to a word in template text.
+ *
+ * Many templates are authored in wp_editor and stored as HTML; we must avoid
+ * touching content inside tags/attributes. This only inserts the space when the
+ * `{{#if` sequence is in text content (i.e. not between `<` and `>`).
+ *
+ * @param string $html
+ * @return string
+ */
+function dfb_template_insert_space_before_if_in_text($html) {
+    $html = (string) $html;
+    $re = '/([0-9A-Za-z])\{\{\s*#if\b/';
+    $pos = 0;
+    while (preg_match($re, $html, $m, PREG_OFFSET_CAPTURE, $pos)) {
+        $match_pos = (int) $m[0][1];
+        $insert_at = (int) $m[1][1] + 1; // after the preceding character
+
+        // Determine whether we're inside an HTML tag by looking at the last '<' and '>' before the match.
+        $before = substr($html, 0, $match_pos);
+        $last_lt = strrpos($before, '<');
+        $last_gt = strrpos($before, '>');
+        $inside_tag = ($last_lt !== false) && ($last_gt === false || $last_lt > $last_gt);
+
+        if (!$inside_tag) {
+            $html = substr($html, 0, $insert_at) . ' ' . substr($html, $insert_at);
+            $pos = $insert_at + 1; // continue after inserted space
+        } else {
+            $pos = $match_pos + 1;
+        }
+    }
+    return $html;
+}
+
 function dfb_render_document_template($template_content, $response_row) {
     // Decode entities from wp_editor content and normalize placeholders so
     // `{{question_1}}` and `{{ question_1 }}` both work.
     $template_content = html_entity_decode((string) $template_content, ENT_QUOTES, 'UTF-8');
     $template_content = preg_replace('/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/', '{{\1}}', $template_content);
-    // If placeholders are pasted back-to-back (}} {{ with no space), replaced values run together in the PDF.
-    $template_content = preg_replace('/\}\}\s*\{\{/', '}} {{', $template_content);
     $template_had_html = preg_match('/<\s*\/?\s*[a-zA-Z][^>]*>/', (string) $template_content) === 1;
+    // Prevent "WORD{{#if ...}}TEXT" from gluing together when the conditional renders.
+    // Works for both plain text and HTML templates (but does not touch tag/attribute content).
+    $template_content = dfb_template_insert_space_before_if_in_text((string) $template_content);
+    $template_content = dfb_template_apply_nospace_marker((string) $template_content);
 
     $answers = json_decode((string) ($response_row->answers ?? ''), true);
     if (!is_array($answers)) {
@@ -341,8 +562,14 @@ function dfb_render_document_template($template_content, $response_row) {
     }
 
     $template_content = dfb_template_process_conditionals((string) $template_content, $answers);
+    $template_content = dfb_template_collapse_blank_lines($template_content);
+    // Only normalize back-to-back placeholders AFTER conditionals are resolved, so we don't
+    // accidentally inject spaces into the content of conditional branches (causing leading spaces
+    // or double spaces when nested {{#if}}...{{/if}} chains are resolved).
+    $template_content = preg_replace('/\}\}\s*\{\{/', '}} {{', $template_content);
 
     $rendered = strtr((string) $template_content, $replacements);
+    $rendered = dfb_template_fix_spacing_before_punctuation($rendered);
     if (!$template_had_html) {
         // If the template was entered as plain text, preserve newlines and blank lines in HTML/PDF output.
         // HTML collapses raw \n into spaces unless we opt into preformatted whitespace.

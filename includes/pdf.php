@@ -215,6 +215,71 @@ function dfb_generate_pdf_for_response($response_id) {
     return $filepath;
 }
 
+add_action('wp_ajax_dfb_preview_template_pdf', 'dfb_ajax_preview_template_pdf');
+function dfb_ajax_preview_template_pdf() {
+    if (!current_user_can('manage_options')) {
+        wp_die(esc_html__('Unauthorized access.', 'dynamic-form-builder'), '', ['response' => 403]);
+    }
+
+    if (!isset($_POST['nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['nonce'])), 'dfb_nonce')) {
+        wp_die(esc_html__('Invalid request.', 'dynamic-form-builder'), '', ['response' => 400]);
+    }
+
+    $template_content = isset($_POST['template_content']) ? (string) wp_unslash($_POST['template_content']) : '';
+    $answers_json     = isset($_POST['answers_json']) ? (string) wp_unslash($_POST['answers_json']) : '';
+
+    if (!dfb_load_dompdf_autoload()) {
+        wp_die(esc_html__('PDF generator is not available (dompdf missing).', 'dynamic-form-builder'), '', ['response' => 500]);
+    }
+
+    $answers = json_decode($answers_json, true);
+    if (!is_array($answers)) {
+        $answers = [];
+    }
+
+    $response_row = (object) [
+        'id'         => 0,
+        'form_id'    => 0,
+        'user_name'  => 'Preview User',
+        'user_email' => 'preview@example.com',
+        'answers'    => wp_json_encode($answers),
+    ];
+
+    $html_content = dfb_render_document_template($template_content, $response_row);
+    if ($html_content === '') {
+        wp_die(esc_html__('Preview failed: empty HTML.', 'dynamic-form-builder'), '', ['response' => 500]);
+    }
+
+    $html_content = dfb_pdf_prepare_html_for_dompdf($html_content);
+
+    $dompdf_opts = dfb_create_dompdf_options();
+    if ($dompdf_opts === null) {
+        wp_die(esc_html__('Preview failed: dompdf options could not be created.', 'dynamic-form-builder'), '', ['response' => 500]);
+    }
+
+    try {
+        $dompdf = new \Dompdf\Dompdf($dompdf_opts);
+        $dompdf->loadHtml($html_content, 'UTF-8');
+        $dompdf->setPaper('A4', 'portrait');
+        $dompdf->render();
+        $pdf_binary = $dompdf->output();
+    } catch (\Throwable $e) {
+        $msg = preg_replace('/\s+/', ' ', (string) $e->getMessage());
+        wp_die(esc_html__('Preview failed: ', 'dynamic-form-builder') . esc_html(substr($msg, 0, 160)), '', ['response' => 500]);
+    }
+
+    if (!is_string($pdf_binary) || $pdf_binary === '') {
+        wp_die(esc_html__('Preview failed: empty PDF output.', 'dynamic-form-builder'), '', ['response' => 500]);
+    }
+
+    nocache_headers();
+    header('Content-Type: application/pdf');
+    header('Content-Disposition: inline; filename="dfb-template-preview.pdf"');
+    header('Content-Length: ' . (string) strlen($pdf_binary));
+    echo $pdf_binary;
+    exit;
+}
+
 add_action('woocommerce_order_status_completed', 'dfb_send_pdf_on_order_completed');
 function dfb_send_pdf_on_order_completed($order_id) {
     $order = wc_get_order($order_id);

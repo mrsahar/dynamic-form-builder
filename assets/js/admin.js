@@ -154,4 +154,40 @@ jQuery(document).ready(function($) {
             $(this).find('h3').text('Question #' + (index + 1));
         });
     }
+
+    // Preview PDF for current template (opens in new tab).
+    $(document).on('click', '#dfb-preview-pdf', function(e) {
+        e.preventDefault();
+
+        // Pull template HTML from TinyMCE when available; fallback to textarea.
+        let templateHtml = '';
+        if (window.tinymce && tinymce.get('template_content')) {
+            templateHtml = tinymce.get('template_content').getContent();
+        } else {
+            templateHtml = $('textarea[name="template_content"]').val() || '';
+        }
+
+        // Build simple sample answers based on current question rows.
+        const answers = {};
+        $('.question-row').each(function(i) {
+            const n = i + 1;
+            answers['question_' + n] = 'Answer ' + n;
+        });
+
+        // Submit as a POST form to admin-ajax so the PDF streams inline.
+        const $form = $('<form>', {
+            method: 'POST',
+            action: (window.dfbAjax && dfbAjax.ajaxurl) ? dfbAjax.ajaxurl : ajaxurl,
+            target: '_blank'
+        });
+
+        $form.append($('<input>', { type: 'hidden', name: 'action', value: 'dfb_preview_template_pdf' }));
+        $form.append($('<input>', { type: 'hidden', name: 'nonce', value: (window.dfbAjax && dfbAjax.nonce) ? dfbAjax.nonce : '' }));
+        $form.append($('<input>', { type: 'hidden', name: 'template_content', value: templateHtml }));
+        $form.append($('<input>', { type: 'hidden', name: 'answers_json', value: JSON.stringify(answers) }));
+
+        $('body').append($form);
+        $form.trigger('submit');
+        setTimeout(function() { $form.remove(); }, 1000);
+    });
 });
